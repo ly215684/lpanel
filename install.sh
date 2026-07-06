@@ -310,6 +310,8 @@ else
 fi
 
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE lpanel TO lpanel;"
+sudo -u postgres psql -d lpanel -c "GRANT ALL ON SCHEMA public TO lpanel;"
+sudo -u postgres psql -d lpanel -c "ALTER SCHEMA public OWNER TO lpanel;"
 
 echo ""
 echo "[7/8] 配置环境变量..."
