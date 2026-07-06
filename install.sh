@@ -298,8 +298,11 @@ PANEL_PORT=$(generate_random_port)
 sudo -u postgres psql -c "SELECT 1 FROM pg_database WHERE datname='lpanel'" | grep -q 1 || \
   sudo -u postgres psql -c "CREATE DATABASE lpanel;"
 
-sudo -u postgres psql -c "SELECT 1 FROM pg_roles WHERE rolname='lpanel'" | grep -q 1 || \
+if sudo -u postgres psql -c "SELECT 1 FROM pg_roles WHERE rolname='lpanel'" | grep -q 1; then
+  sudo -u postgres psql -c "ALTER USER lpanel WITH PASSWORD '$DB_PASSWORD';"
+else
   sudo -u postgres psql -c "CREATE USER lpanel WITH PASSWORD '$DB_PASSWORD';"
+fi
 
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE lpanel TO lpanel;"
 
