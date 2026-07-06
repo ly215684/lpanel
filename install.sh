@@ -5,6 +5,72 @@ set -e
 REPO="ly215684/lpanel"
 INSTALL_DIR="/opt/lpanel"
 DOWNLOAD_DIR="/tmp/lpanel-install"
+MAX_RETRIES=5
+RETRY_DELAY=3
+
+MIRROR_LIST=(
+  "https://ghproxy.com"
+  "https://gh.api.99988866.xyz"
+  "https://mirror.ghproxy.com"
+  "https://gh-proxy.com"
+)
+
+download_with_retry() {
+  local url=$1
+  local output=$2
+  local use_mirror=${3:-false}
+  local attempt=1
+  local mirror_index=0
+
+  while [ $attempt -le $MAX_RETRIES ]; do
+    echo "  尝试下载 ($attempt/$MAX_RETRIES)..."
+    
+    local download_url="$url"
+    if [ "$use_mirror" = "true" ] && [ $mirror_index -lt ${#MIRROR_LIST[@]} ]; then
+      download_url="${MIRROR_LIST[$mirror_index]}/$url"
+      echo "  使用镜像: ${MIRROR_LIST[$mirror_index]}"
+    fi
+    
+    if curl -L --connect-timeout 15 --max-time 300 -o "$output" "$download_url"; then
+      echo "  下载成功！"
+      return 0
+    fi
+    
+    echo "  下载失败，等待 ${RETRY_DELAY} 秒后重试..."
+    sleep $RETRY_DELAY
+    attempt=$((attempt + 1))
+    
+    if [ $((attempt % 2)) -eq 0 ] && [ "$use_mirror" = "true" ] && [ $mirror_index -lt $((${#MIRROR_LIST[@]} - 1)) ]; then
+      mirror_index=$((mirror_index + 1))
+    fi
+  done
+
+  echo "  错误：下载失败，已重试 $MAX_RETRIES 次"
+  return 1
+}
+
+fetch_api_with_retry() {
+  local url=$1
+  local attempt=1
+
+  while [ $attempt -le $MAX_RETRIES ]; do
+    echo "  尝试请求 API ($attempt/$MAX_RETRIES)..."
+    
+    local result
+    result=$(curl -s --connect-timeout 10 --max-time 30 "$url" 2>/dev/null)
+    if [ -n "$result" ] && echo "$result" | jq -e '.tag_name' > /dev/null 2>&1; then
+      echo "$result"
+      return 0
+    fi
+    
+    echo "  请求失败，等待 ${RETRY_DELAY} 秒后重试..."
+    sleep $RETRY_DELAY
+    attempt=$((attempt + 1))
+  done
+
+  echo ""
+  return 1
+}
 
 generate_random_string() {
   cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1
@@ -100,7 +166,19 @@ if ! command -v jq &> /dev/null; then
 fi
 
 echo "[2/8] 获取最新版本..."
-LATEST_RELEASE=$(curl -s "https://api.github.com/repos/$REPO/releases/latest")
+LATEST_RELEASE=$(fetch_api_with_retry "https://api.github.com/repos/$REPO/releases/latest")
+
+if [ -z "$LATEST_RELEASE" ]; then
+  echo "  警告：无法通过 GitHub API 获取版本信息"
+  echo "  正在尝试使用镜像源..."
+  LATEST_RELEASE=$(fetch_api_with_retry "https://ghproxy.com/https://api.github.com/repos/$REPO/releases/latest")
+fi
+
+if [ -z "$LATEST_RELEASE" ]; then
+  echo "错误：无法获取最新版本信息"
+  exit 1
+fi
+
 VERSION=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
 DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | select(.name | test("\\.zip$")) | .browser_download_url')
 
@@ -115,7 +193,16 @@ echo "  下载地址: $DOWNLOAD_URL"
 echo ""
 echo "[3/8] 下载安装包..."
 mkdir -p "$DOWNLOAD_DIR"
-curl -L -o "$DOWNLOAD_DIR/lpanel.zip" "$DOWNLOAD_URL"
+
+if ! download_with_retry "$DOWNLOAD_URL" "$DOWNLOAD_DIR/lpanel.zip" "false"; then
+  echo "  直接下载失败，尝试使用镜像源..."
+  if ! download_with_retry "$DOWNLOAD_URL" "$DOWNLOAD_DIR/lpanel.zip" "true"; then
+    echo "错误：下载安装包失败"
+    exit 1
+  fi
+fi
+
+echo "  安装包大小: $(du -h "$DOWNLOAD_DIR/lpanel.zip" | cut -f1)"
 
 echo ""
 echo "[4/8] 解压安装包..."
