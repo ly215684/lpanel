@@ -19,10 +19,12 @@ import settingsRoutes from './routes/settings'
 import { setupMonitorSocket } from './sockets/monitor'
 
 async function main() {
+  const isProduction = process.env.NODE_ENV === 'production'
+  
   const fastify = Fastify({
     logger: {
       level: env.LOG_LEVEL as any,
-      transport: {
+      transport: isProduction ? undefined : {
         target: 'pino-pretty'
       }
     }
