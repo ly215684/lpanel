@@ -176,6 +176,11 @@ if ! command -v unzip &> /dev/null; then
   sudo apt install -y unzip
 fi
 
+if ! command -v make &> /dev/null; then
+  echo "安装编译工具..."
+  sudo apt install -y build-essential python3
+fi
+
 echo "[2/8] 获取最新版本..."
 
 if [ -n "$SPECIFIC_VERSION" ]; then
