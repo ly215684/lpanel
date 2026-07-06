@@ -297,6 +297,61 @@ export async function getTasksApi(): Promise<Task[]> {
   return request.get('/tasks')
 }
 
+export interface DockerStatus {
+  installed: boolean
+  version?: string
+  running: boolean
+  composeInstalled: boolean
+  composeVersion?: string
+}
+
+export interface ServiceStatus {
+  name: string
+  installed: boolean
+  version?: string
+  running: boolean
+}
+
+export interface SystemServices {
+  docker: DockerStatus
+  nginx: ServiceStatus
+  apache: ServiceStatus
+  php: ServiceStatus
+  mysql: ServiceStatus
+}
+
+export async function getDockerStatusApi(): Promise<DockerStatus> {
+  return request.get('/system/docker/status')
+}
+
+export async function getServicesStatusApi(): Promise<SystemServices> {
+  return request.get('/system/services')
+}
+
+export async function installDockerApi() {
+  return request.post('/system/docker/install')
+}
+
+export async function installDockerComposeApi() {
+  return request.post('/system/docker/compose/install')
+}
+
+export async function installNginxApi() {
+  return request.post('/system/nginx/install')
+}
+
+export async function installApacheApi() {
+  return request.post('/system/apache/install')
+}
+
+export async function installPHPApi(version?: string) {
+  return request.post('/system/php/install', { version })
+}
+
+export async function installMySQLApi() {
+  return request.post('/system/mysql/install')
+}
+
 export async function getTaskApi(id: string) {
   return request.get(`/tasks/${id}`)
 }

@@ -15,6 +15,7 @@ const menuItems = [
   { path: '/files', name: 'files', label: '文件管理', icon: 'el-icon-folder-opened' },
   { path: '/containers', name: 'containers', label: '容器管理', icon: 'el-icon-box' },
   { path: '/tasks', name: 'tasks', label: '任务计划', icon: 'el-icon-clock' },
+  { path: '/system', name: 'system', label: '系统管理', icon: 'el-icon-setting' },
   { path: '/users', name: 'users', label: '用户管理', icon: 'el-icon-user' }
 ]
 

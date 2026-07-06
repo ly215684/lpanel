@@ -24,7 +24,14 @@ const ALLOWED_COMMANDS: string[] = [
   '/bin/chown',
   '/usr/bin/du',
   '/sbin/ifconfig',
-  '/usr/bin/ip'
+  '/usr/bin/ip',
+  '/usr/bin/php',
+  '/usr/bin/php7.4',
+  '/usr/bin/php8.0',
+  '/usr/bin/php8.1',
+  '/usr/bin/php8.2',
+  '/usr/bin/php8.3',
+  '/usr/bin/docker-compose'
 ]
 
 const SUDO_COMMANDS: string[] = [

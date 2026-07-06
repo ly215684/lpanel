@@ -14,6 +14,7 @@ import { websitesRoutes } from './routes/websites'
 import { databasesRoutes } from './routes/databases'
 import { containersRoutes } from './routes/containers'
 import { tasksRoutes } from './routes/tasks'
+import { systemRoutes } from './routes/system'
 import { setupMonitorSocket } from './sockets/monitor'
 
 async function main() {
@@ -47,6 +48,7 @@ async function main() {
   await fastify.register(databasesRoutes, { prefix: '/api/databases' })
   await fastify.register(containersRoutes, { prefix: '/api/containers' })
   await fastify.register(tasksRoutes, { prefix: '/api/tasks' })
+  await fastify.register(systemRoutes, { prefix: '/api/system' })
 
   await fastify.listen({ port: env.PORT, host: env.HOST })
 
