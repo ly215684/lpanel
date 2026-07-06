@@ -241,10 +241,30 @@ fi
 echo ""
 echo "[5/8] 安装系统依赖..."
 
-echo "  安装 Node.js..."
+echo "  安装 Node.js 20.24..."
+NEED_INSTALL_NODE=false
 if ! command -v node &> /dev/null; then
-  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-  sudo apt install -y nodejs
+  NEED_INSTALL_NODE=true
+elif ! node -v 2>/dev/null | grep -qE "^v20\.24\."; then
+  echo "  当前 Node.js 版本: $(node -v)，需要升级到 v20.24.0"
+  NEED_INSTALL_NODE=true
+fi
+
+if [ "$NEED_INSTALL_NODE" = "true" ]; then
+  NODE_VERSION="v20.24.0"
+  ARCH=$(uname -m)
+  if [ "$ARCH" = "x86_64" ]; then
+    NODE_ARCH="linux-x64"
+  elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    NODE_ARCH="linux-arm64"
+  else
+    NODE_ARCH="linux-x64"
+  fi
+
+  curl -fsSL "https://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-$NODE_ARCH.tar.xz" -o /tmp/node.tar.xz
+  sudo tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
+  rm /tmp/node.tar.xz
+  echo "  Node.js 安装完成: $(node -v)"
 fi
 
 echo "  安装 PostgreSQL..."

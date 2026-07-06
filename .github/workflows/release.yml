@@ -49,6 +49,9 @@ jobs:
       - name: Copy server files to release
         run: cp -r server release/lpanel/
 
+      - name: Remove node_modules from release
+        run: rm -rf release/lpanel/server/node_modules
+
       - name: Copy scripts to release
         run: cp -r scripts release/lpanel/
 
