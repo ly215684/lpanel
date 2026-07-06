@@ -14,6 +14,22 @@ generate_random_port() {
   echo $((RANDOM % 5000 + 8000))
 }
 
+open_firewall_port() {
+  local port=$1
+  
+  if command -v ufw &> /dev/null; then
+    echo "  配置 UFW 防火墙..."
+    sudo ufw allow $port/tcp
+    sudo ufw reload
+  elif command -v firewalld &> /dev/null; then
+    echo "  配置 firewalld 防火墙..."
+    sudo firewall-cmd --permanent --add-port=$port/tcp
+    sudo firewall-cmd --reload
+  else
+    echo "  未检测到防火墙，跳过端口开放"
+  fi
+}
+
 echo "======================================"
 echo "  LPanel - 一键安装脚本"
 echo "======================================"
@@ -89,6 +105,7 @@ echo "[6/8] 配置数据库..."
 DB_PASSWORD=$(generate_random_string)
 JWT_SECRET=$(generate_random_string)
 ADMIN_PASSWORD=$(generate_random_string)
+PANEL_PORT=$(generate_random_port)
 
 sudo -u postgres psql -c "SELECT 1 FROM pg_database WHERE datname='lpanel'" | grep -q 1 || \
   sudo -u postgres psql -c "CREATE DATABASE lpanel;"
@@ -103,7 +120,7 @@ echo "[7/8] 配置环境变量..."
 cd "$INSTALL_DIR/lpanel/server"
 
 cat > .env << EOF
-PORT=3000
+PORT=$PANEL_PORT
 HOST=0.0.0.0
 
 DATABASE_URL="postgresql://lpanel:$DB_PASSWORD@localhost:5432/lpanel?schema=public"
@@ -150,11 +167,15 @@ createAdmin().then(() => process.exit(0)).catch((e) => {
 "
 
 echo ""
+echo "[9/9] 开放防火墙端口..."
+open_firewall_port $PANEL_PORT
+
+echo ""
 echo "======================================"
 echo "   安装完成！"
 echo "======================================"
 echo ""
-echo "访问地址: http://$(hostname -I | awk '{print $1}'):3000"
+echo "访问地址: http://$(hostname -I | awk '{print $1}'):$PANEL_PORT"
 echo ""
 echo "登录凭据:"
 echo "  用户名: admin"
