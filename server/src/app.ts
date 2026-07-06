@@ -2,7 +2,9 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import jwt from '@fastify/jwt'
 import multipart from '@fastify/multipart'
+import fastifyStatic from '@fastify/static'
 import { Server } from 'socket.io'
+import path from 'path'
 import { env } from './config'
 import { logger } from './core/logger'
 import { initAdmin } from './services/auth'
@@ -53,6 +55,20 @@ async function main() {
   await fastify.register(tasksRoutes, { prefix: '/api/tasks' })
   await fastify.register(systemRoutes, { prefix: '/api/system' })
   await fastify.register(settingsRoutes, { prefix: '/api/settings' })
+
+  const publicDir = path.join(__dirname, '..', 'public')
+  await fastify.register(fastifyStatic, {
+    root: publicDir,
+    prefix: '/',
+    wildcard: false
+  })
+
+  fastify.setNotFoundHandler((request, reply) => {
+    if (request.url.startsWith('/api/')) {
+      return reply.status(404).send({ error: 'Not Found', message: `Route ${request.method}:${request.url} not found` })
+    }
+    return reply.sendFile('index.html')
+  })
 
   await fastify.listen({ port: env.PORT, host: env.HOST })
 
