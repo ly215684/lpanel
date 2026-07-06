@@ -5,7 +5,7 @@ set -e
 REPO="ly215684/lpanel"
 INSTALL_DIR="/opt/lpanel"
 DOWNLOAD_DIR="/tmp/lpanel-install"
-MAX_RETRIES=5
+MAX_RETRIES=10
 RETRY_DELAY=5
 
 generate_random_string() {
@@ -94,7 +94,7 @@ download_with_retry() {
     echo "  尝试下载 ($attempt/$MAX_RETRIES)..."
     
     local http_code
-    http_code=$(curl -L --connect-timeout 15 --max-time 300 -w "%{http_code}" -o "$output" "$url" 2>/dev/null || echo "000")
+    http_code=$(curl -L --connect-timeout 30 --max-time 600 --retry 3 --retry-delay 3 --retry-max-time 60 -w "%{http_code}" -o "$output" "$url" 2>/dev/null || echo "000")
     
     if [ "$http_code" = "200" ]; then
       echo "  下载成功！"
@@ -171,6 +171,11 @@ if ! command -v jq &> /dev/null; then
   sudo apt install -y jq
 fi
 
+if ! command -v unzip &> /dev/null; then
+  echo "安装 unzip..."
+  sudo apt install -y unzip
+fi
+
 echo "[2/8] 获取最新版本..."
 
 if [ -n "$SPECIFIC_VERSION" ]; then
@@ -238,13 +243,6 @@ if ! command -v psql &> /dev/null; then
   sudo apt install -y postgresql postgresql-contrib
   sudo systemctl enable postgresql
   sudo systemctl start postgresql
-fi
-
-echo "  安装 Docker..."
-if ! command -v docker &> /dev/null; then
-  curl -fsSL https://get.docker.com -o "$DOWNLOAD_DIR/get-docker.sh"
-  sudo sh "$DOWNLOAD_DIR/get-docker.sh"
-  sudo usermod -aG docker $USER
 fi
 
 echo "  安装 Nginx..."

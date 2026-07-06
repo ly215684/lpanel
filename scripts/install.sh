@@ -41,20 +41,13 @@ sudo -u postgres psql -c "CREATE USER lpanel WITH PASSWORD '$DB_PASSWORD';"
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE lpanel TO lpanel;"
 
 echo ""
-echo "Step 5: Installing Docker..."
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
-sudo usermod -aG docker $USER
-rm get-docker.sh
-
-echo ""
-echo "Step 6: Installing Nginx..."
+echo "Step 5: Installing Nginx..."
 sudo apt install -y nginx
 sudo systemctl enable nginx
 sudo systemctl start nginx
 
 echo ""
-echo "Step 7: Installing project dependencies..."
+echo "Step 6: Installing project dependencies..."
 cd server
 npm install
 cd ..
@@ -63,7 +56,7 @@ npm install
 cd ..
 
 echo ""
-echo "Step 8: Configuring environment..."
+echo "Step 7: Configuring environment..."
 cd server
 cp .env.example .env
 sed -i "s|DATABASE_URL=.*|DATABASE_URL=\"postgresql://lpanel:$DB_PASSWORD@localhost:5432/lpanel\"|" .env
@@ -71,14 +64,14 @@ sed -i "s|JWT_SECRET=.*|JWT_SECRET=\"$JWT_SECRET\"|" .env
 cd ..
 
 echo ""
-echo "Step 9: Running database migrations..."
+echo "Step 8: Running database migrations..."
 cd server
 npx prisma migrate dev --name init
 npx prisma generate
 cd ..
 
 echo ""
-echo "Step 10: Creating admin user..."
+echo "Step 9: Creating admin user..."
 cd server
 node -e "
 const { PrismaClient } = require('@prisma/client');
@@ -107,7 +100,7 @@ createAdmin().then(() => process.exit(0)).catch((e) => {
 cd ..
 
 echo ""
-echo "Step 11: Building frontend..."
+echo "Step 10: Building frontend..."
 cd web
 npm run build
 cd ..
