@@ -174,3 +174,92 @@ export async function initAdmin() {
     logger.info('Default admin user created')
   }
 }
+
+export async function updateUser(id: string, data: { username?: string; email?: string; currentPassword: string }) {
+  const user = await prisma.user.findUnique({ where: { id } })
+
+  if (!user) {
+    throw new Error('User not found')
+  }
+
+  const isPasswordValid = await verifyPassword(data.currentPassword, user.password_hash)
+  if (!isPasswordValid) {
+    throw new Error('Current password is incorrect')
+  }
+
+  if (data.username) {
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        username: data.username,
+        NOT: { id }
+      }
+    })
+    if (existingUser) {
+      throw new Error('Username already exists')
+    }
+  }
+
+  if (data.email) {
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        email: data.email,
+        NOT: { id }
+      }
+    })
+    if (existingUser) {
+      throw new Error('Email already exists')
+    }
+  }
+
+  const updatedUser = await prisma.user.update({
+    where: { id },
+    data: {
+      ...data,
+      updated_at: new Date()
+    },
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      role: true,
+      status: true,
+      created_at: true,
+      updated_at: true
+    }
+  })
+
+  await prisma.session.deleteMany({ where: { user_id: id } })
+
+  return updatedUser
+}
+
+export async function changePassword(id: string, currentPassword: string, newPassword: string) {
+  const user = await prisma.user.findUnique({ where: { id } })
+
+  if (!user) {
+    throw new Error('User not found')
+  }
+
+  const isPasswordValid = await verifyPassword(currentPassword, user.password_hash)
+  if (!isPasswordValid) {
+    throw new Error('Current password is incorrect')
+  }
+
+  if (newPassword.length < 6) {
+    throw new Error('Password must be at least 6 characters')
+  }
+
+  const passwordHash = await hashPassword(newPassword)
+
+  await prisma.user.update({
+    where: { id },
+    data: {
+      password_hash: passwordHash,
+      updated_at: new Date()
+    }
+  })
+
+  await prisma.session.deleteMany({ where: { user_id: id } })
+
+  return { message: 'Password changed successfully' }
+}

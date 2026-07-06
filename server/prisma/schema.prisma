@@ -97,3 +97,12 @@ model TaskExecution {
 
   task Task @relation(fields: [task_id], references: [id], onDelete: Cascade)
 }
+
+model PanelSetting {
+  id          String    @id @default(uuid())
+  key         String    @unique @db.VarChar(100)
+  value       String    @db.Text
+  description String?   @db.VarChar(500)
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+}

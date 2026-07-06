@@ -40,6 +40,30 @@ export async function getMeApi(): Promise<User> {
   return request.get('/auth/me')
 }
 
+export async function updateMeApi(data: { username?: string; email?: string; currentPassword: string }): Promise<User> {
+  return request.put('/auth/me', data)
+}
+
+export async function changePasswordApi(currentPassword: string, newPassword: string) {
+  return request.post('/auth/me/password', { currentPassword, newPassword })
+}
+
+export interface PanelSettings {
+  panelTitle: string
+  panelDescription: string
+  monitorInterval: number
+  maxFileSize: number
+  defaultTheme: string
+}
+
+export async function getSettingsApi(): Promise<PanelSettings> {
+  return request.get('/settings')
+}
+
+export async function updateSettingsApi(settings: Partial<PanelSettings>): Promise<PanelSettings> {
+  return request.put('/settings', settings)
+}
+
 export interface MonitorData {
   system: {
     hostname: string

@@ -16,7 +16,8 @@ const menuItems = [
   { path: '/containers', name: 'containers', label: '容器管理', icon: 'el-icon-box' },
   { path: '/tasks', name: 'tasks', label: '任务计划', icon: 'el-icon-clock' },
   { path: '/system', name: 'system', label: '系统管理', icon: 'el-icon-setting' },
-  { path: '/users', name: 'users', label: '用户管理', icon: 'el-icon-user' }
+  { path: '/users', name: 'users', label: '用户管理', icon: 'el-icon-user' },
+  { path: '/settings', name: 'settings', label: '设置', icon: 'el-icon-user-solid' }
 ]
 
 function isActive(path: string) {

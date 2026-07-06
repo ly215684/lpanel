@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { login, refreshToken, logout, getUserById } from '../services/auth'
+import { login, refreshToken, logout, getUserById, updateUser, changePassword } from '../services/auth'
 import { authenticate } from '../middleware/auth'
 import { LoginRequest, RefreshTokenRequest } from '../types'
 
@@ -70,6 +70,26 @@ export async function authRoutes(fastify: FastifyInstance) {
       reply.send(user)
     } catch (error: any) {
       reply.status(500).send({ error: 'Internal Server Error', message: error.message })
+    }
+  })
+
+  fastify.put('/me', { preHandler: authenticate }, async (request, reply) => {
+    try {
+      const { username, email, currentPassword } = request.body as { username?: string; email?: string; currentPassword: string }
+      const user = await updateUser(request.currentUser!.id, { username, email, currentPassword })
+      reply.send(user)
+    } catch (error: any) {
+      reply.status(400).send({ error: 'Bad Request', message: error.message })
+    }
+  })
+
+  fastify.post('/me/password', { preHandler: authenticate }, async (request, reply) => {
+    try {
+      const { currentPassword, newPassword } = request.body as { currentPassword: string; newPassword: string }
+      const result = await changePassword(request.currentUser!.id, currentPassword, newPassword)
+      reply.send(result)
+    } catch (error: any) {
+      reply.status(400).send({ error: 'Bad Request', message: error.message })
     }
   })
 }
