@@ -30,6 +30,59 @@ open_firewall_port() {
   fi
 }
 
+get_public_ip() {
+  local public_ip=""
+  
+  public_ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || true)
+  if [ -n "$public_ip" ] && echo "$public_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "$public_ip"
+    return 0
+  fi
+  
+  public_ip=$(curl -s --max-time 5 https://ifconfig.me/ip 2>/dev/null || true)
+  if [ -n "$public_ip" ] && echo "$public_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "$public_ip"
+    return 0
+  fi
+  
+  public_ip=$(curl -s --max-time 5 https://icanhazip.com 2>/dev/null || true)
+  if [ -n "$public_ip" ] && echo "$public_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "$public_ip"
+    return 0
+  fi
+  
+  return 1
+}
+
+get_lan_ip() {
+  local lan_ip=""
+  
+  lan_ip=$(hostname -I | awk '{print $1}')
+  if [ -n "$lan_ip" ] && echo "$lan_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "$lan_ip"
+    return 0
+  fi
+  
+  lan_ip=$(ip -o -4 addr show | grep -v '127.0.0.1' | head -n 1 | awk '{print $4}' | cut -d'/' -f1)
+  if [ -n "$lan_ip" ] && echo "$lan_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "$lan_ip"
+    return 0
+  fi
+  
+  echo "127.0.0.1"
+  return 0
+}
+
+get_access_ip() {
+  local public_ip=$(get_public_ip)
+  if [ -n "$public_ip" ]; then
+    echo "$public_ip"
+    return 0
+  fi
+  
+  get_lan_ip
+}
+
 echo "======================================"
 echo "  LPanel - 一键安装脚本"
 echo "======================================"
@@ -171,11 +224,15 @@ echo "[9/9] 开放防火墙端口..."
 open_firewall_port $PANEL_PORT
 
 echo ""
+echo "[10/10] 获取访问地址..."
+ACCESS_IP=$(get_access_ip)
+
+echo ""
 echo "======================================"
 echo "   安装完成！"
 echo "======================================"
 echo ""
-echo "访问地址: http://$(hostname -I | awk '{print $1}'):$PANEL_PORT"
+echo "访问地址: http://$ACCESS_IP:$PANEL_PORT"
 echo ""
 echo "登录凭据:"
 echo "  用户名: admin"

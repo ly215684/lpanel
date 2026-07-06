@@ -77,14 +77,29 @@
 
 ## 快速开始
 
-### 方式一：使用安装脚本
+### 方式一：一键安装（推荐）
 
 ```bash
-git clone https://github.com/your-username/lpanel.git
-cd lpanel
-chmod +x scripts/install.sh
-sudo ./scripts/install.sh
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/ly215684/lpanel/main/install.sh)"
 ```
+
+脚本会自动完成以下操作：
+- 下载最新版本的安装包
+- 安装系统依赖（Node.js、PostgreSQL、Docker、Nginx）
+- 配置数据库和环境变量
+- 随机生成管理员密码和面板端口（8000-13000）
+- 自动识别公网/局域网 IPv4 地址
+- 自动开放防火墙端口（UFW/firewalld）
+
+安装完成后会显示：
+```
+访问地址: http://203.0.113.50:9842
+登录凭据:
+  用户名: admin
+  密码: xY3z9Pq2Rf5Gt7Kb
+```
+
+> **注意**: 如果服务器有公网 IP，访问地址会自动使用公网 IP；否则使用局域网 IP。
 
 ### 方式二：手动安装
 
