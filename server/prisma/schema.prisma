@@ -1,0 +1,99 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(uuid())
+  username      String    @unique @db.VarChar(50)
+  email         String    @unique @db.VarChar(100)
+  password_hash String    @db.VarChar(255)
+  role          String    @db.VarChar(20) @default("user")
+  status        Boolean   @default(true)
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  sessions Session[]
+}
+
+model Session {
+  id            String   @id @default(uuid())
+  user_id       String
+  refresh_token String   @db.VarChar(255)
+  expires_at    DateTime
+  ip_address    String   @db.VarChar(50)
+  created_at    DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model Website {
+  id           String    @id @default(uuid())
+  name         String    @db.VarChar(100)
+  domain       String    @db.VarChar(200)
+  web_server   String    @db.VarChar(20)
+  config_path  String    @db.VarChar(500)
+  ssl_enabled  Boolean   @default(false)
+  ssl_cert_path String?  @db.VarChar(500)
+  ssl_key_path  String?  @db.VarChar(500)
+  status       String    @db.VarChar(20)
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+}
+
+model Database {
+  id            String    @id @default(uuid())
+  name          String    @db.VarChar(100)
+  type          String    @db.VarChar(20)
+  host          String    @db.VarChar(100)
+  port          Int
+  username      String    @db.VarChar(50)
+  password_hash String    @db.VarChar(255)
+  status        String    @db.VarChar(20)
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  backups Backup[]
+}
+
+model Backup {
+  id           String    @id @default(uuid())
+  database_id  String
+  type         String    @db.VarChar(20)
+  path         String    @db.VarChar(500)
+  size         BigInt
+  status       String    @db.VarChar(20)
+  created_at   DateTime  @default(now())
+
+  database Database @relation(fields: [database_id], references: [id], onDelete: Cascade)
+}
+
+model Task {
+  id               String         @id @default(uuid())
+  name             String         @db.VarChar(100)
+  type             String         @db.VarChar(20)
+  cron_expression  String         @db.VarChar(50)
+  command          String?
+  status           String         @db.VarChar(20)
+  last_run_at      DateTime?
+  created_at       DateTime       @default(now())
+  updated_at       DateTime       @updatedAt
+
+  executions TaskExecution[]
+}
+
+model TaskExecution {
+  id          String    @id @default(uuid())
+  task_id     String
+  status      String    @db.VarChar(20)
+  output      String?
+  error       String?
+  started_at  DateTime
+  finished_at DateTime?
+
+  task Task @relation(fields: [task_id], references: [id], onDelete: Cascade)
+}
