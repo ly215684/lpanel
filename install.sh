@@ -229,6 +229,15 @@ rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 unzip -q "$DOWNLOAD_DIR/lpanel.zip" -d "$INSTALL_DIR"
 
+if [ -d "$INSTALL_DIR/lpanel/server" ]; then
+  SERVER_DIR="$INSTALL_DIR/lpanel/server"
+elif [ -d "$INSTALL_DIR/lpanel" ] && [ -f "$INSTALL_DIR/lpanel/package.json" ]; then
+  SERVER_DIR="$INSTALL_DIR/lpanel"
+else
+  echo "错误：无法找到 server 目录"
+  exit 1
+fi
+
 echo ""
 echo "[5/8] 安装系统依赖..."
 
@@ -269,7 +278,7 @@ sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE lpanel TO lpanel;"
 
 echo ""
 echo "[7/8] 配置环境变量..."
-cd "$INSTALL_DIR/lpanel/server"
+cd "$SERVER_DIR"
 
 cat > .env << EOF
 PORT=$PANEL_PORT
@@ -313,7 +322,7 @@ echo "  用户名: admin"
 echo "  密码: $ADMIN_PASSWORD"
 echo ""
 echo "启动命令:"
-echo "  cd $INSTALL_DIR/lpanel/server"
+echo "  cd $SERVER_DIR"
 echo "  npm run start"
 echo ""
 echo "查看日志:"

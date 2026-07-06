@@ -47,7 +47,7 @@ jobs:
         run: mkdir -p release/lpanel
 
       - name: Copy server files to release
-        run: cp -r server/* release/lpanel/
+        run: cp -r server release/lpanel/
 
       - name: Copy scripts to release
         run: cp -r scripts release/lpanel/
