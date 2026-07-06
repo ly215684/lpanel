@@ -241,17 +241,17 @@ fi
 echo ""
 echo "[5/8] 安装系统依赖..."
 
-echo "  安装 Node.js 20.24..."
+echo "  安装 Node.js 24..."
 NEED_INSTALL_NODE=false
 if ! command -v node &> /dev/null; then
   NEED_INSTALL_NODE=true
-elif ! node -v 2>/dev/null | grep -qE "^v20\.24\."; then
-  echo "  当前 Node.js 版本: $(node -v)，需要升级到 v20.24.0"
+elif ! node -v 2>/dev/null | grep -qE "^v24\."; then
+  echo "  当前 Node.js 版本: $(node -v)，需要升级到 v24.x"
   NEED_INSTALL_NODE=true
 fi
 
 if [ "$NEED_INSTALL_NODE" = "true" ]; then
-  NODE_VERSION="v20.24.0"
+  NODE_MAJOR="24"
   ARCH=$(uname -m)
   if [ "$ARCH" = "x86_64" ]; then
     NODE_ARCH="linux-x64"
@@ -261,7 +261,14 @@ if [ "$NEED_INSTALL_NODE" = "true" ]; then
     NODE_ARCH="linux-x64"
   fi
 
-  curl -fsSL "https://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-$NODE_ARCH.tar.xz" -o /tmp/node.tar.xz
+  NODE_VERSION=$(curl -s https://nodejs.org/dist/latest-v$NODE_MAJOR.x/ | grep -oP 'node-v\K[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+  if [ -z "$NODE_VERSION" ]; then
+    NODE_VERSION="24.14.0"
+  fi
+  NODE_FULL_VERSION="v$NODE_VERSION"
+
+  echo "  下载 Node.js $NODE_FULL_VERSION..."
+  curl -fsSL "https://nodejs.org/dist/$NODE_FULL_VERSION/node-$NODE_FULL_VERSION-$NODE_ARCH.tar.xz" -o /tmp/node.tar.xz
   sudo tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
   rm /tmp/node.tar.xz
   echo "  Node.js 安装完成: $(node -v)"
