@@ -8,130 +8,6 @@ DOWNLOAD_DIR="/tmp/lpanel-install"
 MAX_RETRIES=5
 RETRY_DELAY=5
 
-MIRROR_LIST=(
-  "https://ghproxy.com"
-  "https://gh.api.99988866.xyz"
-  "https://mirror.ghproxy.com"
-  "https://gh-proxy.com"
-)
-
-API_MIRROR_LIST=(
-  "https://ghproxy.com/https://api.github.com"
-  "https://mirror.ghproxy.com/https://api.github.com"
-)
-
-download_with_retry() {
-  local url=$1
-  local output=$2
-  local use_mirror=${3:-false}
-  local attempt=1
-  local mirror_index=0
-
-  while [ $attempt -le $MAX_RETRIES ]; do
-    echo "  尝试下载 ($attempt/$MAX_RETRIES)..."
-    
-    local download_url="$url"
-    if [ "$use_mirror" = "true" ] && [ $mirror_index -lt ${#MIRROR_LIST[@]} ]; then
-      download_url="${MIRROR_LIST[$mirror_index]}/$url"
-      echo "  使用镜像: ${MIRROR_LIST[$mirror_index]}"
-    fi
-    
-    local http_code
-    http_code=$(curl -L --connect-timeout 15 --max-time 300 -w "%{http_code}" -o "$output" "$download_url" 2>/dev/null || echo "000")
-    
-    if [ "$http_code" = "200" ]; then
-      echo "  下载成功！"
-      return 0
-    fi
-    
-    echo "  下载失败 (HTTP $http_code)，等待 ${RETRY_DELAY} 秒后重试..."
-    sleep $RETRY_DELAY
-    attempt=$((attempt + 1))
-    
-    if [ $((attempt % 2)) -eq 0 ] && [ "$use_mirror" = "true" ] && [ $mirror_index -lt $((${#MIRROR_LIST[@]} - 1)) ]; then
-      mirror_index=$((mirror_index + 1))
-    fi
-  done
-
-  echo "  错误：下载失败，已重试 $MAX_RETRIES 次"
-  return 1
-}
-
-fetch_api_with_retry() {
-  local url=$1
-  local attempt=1
-
-  while [ $attempt -le $MAX_RETRIES ]; do
-    echo "  尝试请求 API ($attempt/$MAX_RETRIES)..."
-    
-    local result
-    local http_code
-    result=$(curl -s --connect-timeout 10 --max-time 30 -w "\n%{http_code}" "$url" 2>/dev/null || true)
-    
-    http_code=$(echo "$result" | tail -n 1)
-    result=$(echo "$result" | sed '$d')
-    
-    if [ "$http_code" = "429" ]; then
-      echo "  GitHub API 限速 (429)，等待 10 秒后重试..."
-      sleep 10
-      attempt=$((attempt + 1))
-      continue
-    fi
-    
-    if [ "$http_code" = "200" ] && [ -n "$result" ] && echo "$result" | jq -e '.tag_name' > /dev/null 2>&1; then
-      echo "$result"
-      return 0
-    fi
-    
-    echo "  请求失败 (HTTP $http_code)，等待 ${RETRY_DELAY} 秒后重试..."
-    sleep $RETRY_DELAY
-    attempt=$((attempt + 1))
-  done
-
-  echo ""
-  return 1
-}
-
-get_latest_version_fallback() {
-  echo "  正在尝试从镜像站获取版本信息..."
-  
-  for mirror in "${API_MIRROR_LIST[@]}"; do
-    echo "  尝试镜像: $mirror"
-    local result
-    result=$(curl -s --connect-timeout 10 --max-time 30 "$mirror/repos/$REPO/releases/latest" 2>/dev/null || true)
-    
-    if [ -n "$result" ] && echo "$result" | jq -e '.tag_name' > /dev/null 2>&1; then
-      echo "$result"
-      return 0
-    fi
-  done
-  
-  echo ""
-  return 1
-}
-
-download_version_direct() {
-  local version=$1
-  local output=$2
-  
-  echo "  正在尝试从镜像站直接下载 $version ..."
-  
-  for mirror in "${MIRROR_LIST[@]}"; do
-    local download_url="$mirror/https://github.com/$REPO/releases/download/$version/lpanel-$version.zip"
-    echo "  尝试: $mirror"
-    
-    local http_code
-    http_code=$(curl -L --connect-timeout 15 --max-time 300 -w "%{http_code}" -o "$output" "$download_url" 2>/dev/null || echo "000")
-    
-    if [ "$http_code" = "200" ]; then
-      echo "  下载成功！"
-      return 0
-    fi
-  done
-  
-  return 1
-}
-
 generate_random_string() {
   cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1
 }
@@ -209,6 +85,74 @@ get_access_ip() {
   get_lan_ip
 }
 
+download_with_retry() {
+  local url=$1
+  local output=$2
+  local attempt=1
+
+  while [ $attempt -le $MAX_RETRIES ]; do
+    echo "  尝试下载 ($attempt/$MAX_RETRIES)..."
+    
+    local http_code
+    http_code=$(curl -L --connect-timeout 15 --max-time 300 -w "%{http_code}" -o "$output" "$url" 2>/dev/null || echo "000")
+    
+    if [ "$http_code" = "200" ]; then
+      echo "  下载成功！"
+      return 0
+    fi
+    
+    if [ "$http_code" = "429" ]; then
+      echo "  限速 (429)，等待 10 秒后重试..."
+      sleep 10
+    else
+      echo "  下载失败 (HTTP $http_code)，等待 ${RETRY_DELAY} 秒后重试..."
+      sleep $RETRY_DELAY
+    fi
+    
+    attempt=$((attempt + 1))
+  done
+
+  echo "  错误：下载失败，已重试 $MAX_RETRIES 次"
+  return 1
+}
+
+fetch_latest_release() {
+  local temp_file=$(mktemp)
+  local attempt=1
+
+  while [ $attempt -le $MAX_RETRIES ]; do
+    echo "  尝试请求 API ($attempt/$MAX_RETRIES)..."
+    
+    local http_code
+    http_code=$(curl -s --connect-timeout 10 --max-time 30 -w "%{http_code}" -o "$temp_file" "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null || echo "000")
+    
+    if [ "$http_code" = "429" ]; then
+      echo "  GitHub API 限速 (429)，等待 10 秒后重试..."
+      sleep 10
+      attempt=$((attempt + 1))
+      continue
+    fi
+    
+    if [ "$http_code" = "200" ]; then
+      local result
+      result=$(cat "$temp_file")
+      if [ -n "$result" ] && echo "$result" | jq -e '.tag_name' > /dev/null 2>&1; then
+        echo "$result"
+        rm -f "$temp_file"
+        return 0
+      fi
+    fi
+    
+    echo "  请求失败 (HTTP $http_code)，等待 ${RETRY_DELAY} 秒后重试..."
+    sleep $RETRY_DELAY
+    attempt=$((attempt + 1))
+  done
+
+  rm -f "$temp_file"
+  echo ""
+  return 1
+}
+
 echo "======================================"
 echo "  LPanel - 一键安装脚本"
 echo "======================================"
@@ -234,13 +178,7 @@ if [ -n "$SPECIFIC_VERSION" ]; then
   VERSION="$SPECIFIC_VERSION"
   DOWNLOAD_URL="https://github.com/$REPO/releases/download/$VERSION/lpanel-$VERSION.zip"
 else
-  LATEST_RELEASE=$(fetch_api_with_retry "https://api.github.com/repos/$REPO/releases/latest")
-
-  if [ -z "$LATEST_RELEASE" ]; then
-    echo "  警告：无法通过 GitHub API 获取版本信息"
-    echo "  正在尝试从镜像站获取..."
-    LATEST_RELEASE=$(get_latest_version_fallback)
-  fi
+  LATEST_RELEASE=$(fetch_latest_release)
 
   if [ -z "$LATEST_RELEASE" ]; then
     echo "错误：无法获取最新版本信息"
@@ -266,27 +204,7 @@ echo ""
 echo "[3/8] 下载安装包..."
 mkdir -p "$DOWNLOAD_DIR"
 
-download_success=false
-
-if download_with_retry "$DOWNLOAD_URL" "$DOWNLOAD_DIR/lpanel.zip" "false"; then
-  download_success=true
-fi
-
-if [ "$download_success" = "false" ]; then
-  echo "  直接下载失败，尝试使用镜像源..."
-  if download_with_retry "$DOWNLOAD_URL" "$DOWNLOAD_DIR/lpanel.zip" "true"; then
-    download_success=true
-  fi
-fi
-
-if [ "$download_success" = "false" ]; then
-  echo "  镜像下载失败，尝试直接从镜像站下载..."
-  if download_version_direct "$VERSION" "$DOWNLOAD_DIR/lpanel.zip"; then
-    download_success=true
-  fi
-fi
-
-if [ "$download_success" = "false" ]; then
+if ! download_with_retry "$DOWNLOAD_URL" "$DOWNLOAD_DIR/lpanel.zip"; then
   echo "错误：下载安装包失败"
   echo ""
   echo "您可以手动下载安装包后上传到服务器："
@@ -362,7 +280,7 @@ HOST=0.0.0.0
 DATABASE_URL="postgresql://lpanel:$DB_PASSWORD@localhost:5432/lpanel?schema=public"
 
 JWT_SECRET="$JWT_SECRET"
-JWT_EXPIRES_IN="15m"
+JWT_EXPIRES_IN="24h"
 JWT_REFRESH_EXPIRES_IN="7d"
 
 ADMIN_PASSWORD="$ADMIN_PASSWORD"
@@ -370,44 +288,19 @@ ADMIN_PASSWORD="$ADMIN_PASSWORD"
 LOG_LEVEL="info"
 EOF
 
-echo ""
-echo "[8/8] 初始化面板..."
+echo "  安装 npm 依赖..."
+npm install
 
-echo "  运行数据库迁移..."
-npx prisma migrate dev --name init --skip-seed
+echo "  生成 Prisma Client..."
+npx prisma generate
 
-echo "  创建管理员用户..."
-node -e "
-const { PrismaClient } = require('@prisma/client');
-const bcrypt = require('bcrypt');
-const prisma = new PrismaClient();
-
-async function createAdmin() {
-  const passwordHash = await bcrypt.hash('$ADMIN_PASSWORD', 10);
-  await prisma.user.create({
-    data: {
-      username: 'admin',
-      email: 'admin@localhost',
-      password_hash: passwordHash,
-      role: 'admin',
-      status: true
-    }
-  });
-  console.log('Admin user created');
-}
-
-createAdmin().then(() => process.exit(0)).catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
-"
+echo "  执行数据库迁移..."
+npx prisma db push
 
 echo ""
-echo "[9/9] 开放防火墙端口..."
+echo "[8/8] 开放防火墙端口..."
 open_firewall_port $PANEL_PORT
 
-echo ""
-echo "[10/10] 获取访问地址..."
 ACCESS_IP=$(get_access_ip)
 
 echo ""
@@ -425,7 +318,11 @@ echo "启动命令:"
 echo "  cd $INSTALL_DIR/lpanel/server"
 echo "  npm run start"
 echo ""
-echo "配置文件: $INSTALL_DIR/lpanel/server/.env"
+echo "查看日志:"
+echo "  端口: $PANEL_PORT"
+echo "  数据库密码: $DB_PASSWORD"
+echo "  JWT密钥: $JWT_SECRET"
 echo ""
+echo "======================================"
 
 rm -rf "$DOWNLOAD_DIR"
