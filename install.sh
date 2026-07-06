@@ -345,6 +345,29 @@ echo ""
 echo "[8/8] 开放防火墙端口..."
 open_firewall_port $PANEL_PORT
 
+echo ""
+echo "  配置 systemd 服务..."
+cat > /etc/systemd/system/lpanel.service << EOF
+[Unit]
+Description=LPanel - Linux Server Management Panel
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$SERVER_DIR
+ExecStart=/usr/local/bin/node dist/app.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable lpanel
+
 ACCESS_IP=$(get_access_ip)
 
 echo ""
@@ -358,14 +381,30 @@ echo "登录凭据:"
 echo "  用户名: admin"
 echo "  密码: $ADMIN_PASSWORD"
 echo ""
-echo "启动命令:"
-echo "  cd $SERVER_DIR"
-echo "  npm run start"
+echo "服务管理:"
+echo "  启动服务: systemctl start lpanel"
+echo "  停止服务: systemctl stop lpanel"
+echo "  重启服务: systemctl restart lpanel"
+echo "  查看状态: systemctl status lpanel"
+echo "  查看日志: journalctl -u lpanel -f"
 echo ""
-echo "查看日志:"
+echo "立即启动服务..."
+systemctl start lpanel
+
+sleep 2
+if systemctl is-active --quiet lpanel; then
+  echo "  服务启动成功！"
+else
+  echo "  警告：服务启动失败，请手动检查："
+  echo "  systemctl status lpanel"
+  echo "  journalctl -u lpanel -e"
+fi
+echo ""
+echo "其他信息:"
 echo "  端口: $PANEL_PORT"
 echo "  数据库密码: $DB_PASSWORD"
 echo "  JWT密钥: $JWT_SECRET"
+echo "  安装目录: $SERVER_DIR"
 echo ""
 echo "======================================"
 
