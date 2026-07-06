@@ -6,13 +6,18 @@ REPO="ly215684/lpanel"
 INSTALL_DIR="/opt/lpanel"
 DOWNLOAD_DIR="/tmp/lpanel-install"
 MAX_RETRIES=5
-RETRY_DELAY=3
+RETRY_DELAY=5
 
 MIRROR_LIST=(
   "https://ghproxy.com"
   "https://gh.api.99988866.xyz"
   "https://mirror.ghproxy.com"
   "https://gh-proxy.com"
+)
+
+API_MIRROR_LIST=(
+  "https://ghproxy.com/https://api.github.com"
+  "https://mirror.ghproxy.com/https://api.github.com"
 )
 
 download_with_retry() {
@@ -31,12 +36,15 @@ download_with_retry() {
       echo "  使用镜像: ${MIRROR_LIST[$mirror_index]}"
     fi
     
-    if curl -L --connect-timeout 15 --max-time 300 -o "$output" "$download_url"; then
+    local http_code
+    http_code=$(curl -L --connect-timeout 15 --max-time 300 -w "%{http_code}" -o "$output" "$download_url" 2>/dev/null || echo "000")
+    
+    if [ "$http_code" = "200" ]; then
       echo "  下载成功！"
       return 0
     fi
     
-    echo "  下载失败，等待 ${RETRY_DELAY} 秒后重试..."
+    echo "  下载失败 (HTTP $http_code)，等待 ${RETRY_DELAY} 秒后重试..."
     sleep $RETRY_DELAY
     attempt=$((attempt + 1))
     
@@ -57,18 +65,70 @@ fetch_api_with_retry() {
     echo "  尝试请求 API ($attempt/$MAX_RETRIES)..."
     
     local result
-    result=$(curl -s --connect-timeout 10 --max-time 30 "$url" 2>/dev/null)
-    if [ -n "$result" ] && echo "$result" | jq -e '.tag_name' > /dev/null 2>&1; then
+    local http_code
+    result=$(curl -s --connect-timeout 10 --max-time 30 -w "\n%{http_code}" "$url" 2>/dev/null || true)
+    
+    http_code=$(echo "$result" | tail -n 1)
+    result=$(echo "$result" | sed '$d')
+    
+    if [ "$http_code" = "429" ]; then
+      echo "  GitHub API 限速 (429)，等待 10 秒后重试..."
+      sleep 10
+      attempt=$((attempt + 1))
+      continue
+    fi
+    
+    if [ "$http_code" = "200" ] && [ -n "$result" ] && echo "$result" | jq -e '.tag_name' > /dev/null 2>&1; then
       echo "$result"
       return 0
     fi
     
-    echo "  请求失败，等待 ${RETRY_DELAY} 秒后重试..."
+    echo "  请求失败 (HTTP $http_code)，等待 ${RETRY_DELAY} 秒后重试..."
     sleep $RETRY_DELAY
     attempt=$((attempt + 1))
   done
 
   echo ""
+  return 1
+}
+
+get_latest_version_fallback() {
+  echo "  正在尝试从镜像站获取版本信息..."
+  
+  for mirror in "${API_MIRROR_LIST[@]}"; do
+    echo "  尝试镜像: $mirror"
+    local result
+    result=$(curl -s --connect-timeout 10 --max-time 30 "$mirror/repos/$REPO/releases/latest" 2>/dev/null || true)
+    
+    if [ -n "$result" ] && echo "$result" | jq -e '.tag_name' > /dev/null 2>&1; then
+      echo "$result"
+      return 0
+    fi
+  done
+  
+  echo ""
+  return 1
+}
+
+download_version_direct() {
+  local version=$1
+  local output=$2
+  
+  echo "  正在尝试从镜像站直接下载 $version ..."
+  
+  for mirror in "${MIRROR_LIST[@]}"; do
+    local download_url="$mirror/https://github.com/$REPO/releases/download/$version/lpanel-$version.zip"
+    echo "  尝试: $mirror"
+    
+    local http_code
+    http_code=$(curl -L --connect-timeout 15 --max-time 300 -w "%{http_code}" -o "$output" "$download_url" 2>/dev/null || echo "000")
+    
+    if [ "$http_code" = "200" ]; then
+      echo "  下载成功！"
+      return 0
+    fi
+  done
+  
   return 1
 }
 
@@ -154,6 +214,8 @@ echo "  LPanel - 一键安装脚本"
 echo "======================================"
 echo ""
 
+SPECIFIC_VERSION="$1"
+
 echo "[1/8] 检测系统环境..."
 if ! command -v curl &> /dev/null; then
   echo "安装 curl..."
@@ -166,40 +228,74 @@ if ! command -v jq &> /dev/null; then
 fi
 
 echo "[2/8] 获取最新版本..."
-LATEST_RELEASE=$(fetch_api_with_retry "https://api.github.com/repos/$REPO/releases/latest")
 
-if [ -z "$LATEST_RELEASE" ]; then
-  echo "  警告：无法通过 GitHub API 获取版本信息"
-  echo "  正在尝试使用镜像源..."
-  LATEST_RELEASE=$(fetch_api_with_retry "https://ghproxy.com/https://api.github.com/repos/$REPO/releases/latest")
+if [ -n "$SPECIFIC_VERSION" ]; then
+  echo "  使用指定版本: $SPECIFIC_VERSION"
+  VERSION="$SPECIFIC_VERSION"
+  DOWNLOAD_URL="https://github.com/$REPO/releases/download/$VERSION/lpanel-$VERSION.zip"
+else
+  LATEST_RELEASE=$(fetch_api_with_retry "https://api.github.com/repos/$REPO/releases/latest")
+
+  if [ -z "$LATEST_RELEASE" ]; then
+    echo "  警告：无法通过 GitHub API 获取版本信息"
+    echo "  正在尝试从镜像站获取..."
+    LATEST_RELEASE=$(get_latest_version_fallback)
+  fi
+
+  if [ -z "$LATEST_RELEASE" ]; then
+    echo "错误：无法获取最新版本信息"
+    echo ""
+    echo "您可以手动指定版本号安装，例如："
+    echo "  curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | bash -s -- v1.0.0"
+    exit 1
+  fi
+
+  VERSION=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
+  DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | select(.name | test("\\.zip$")) | .browser_download_url')
+
+  if [ -z "$DOWNLOAD_URL" ]; then
+    echo "  警告：未找到下载链接，尝试直接构造下载地址"
+    DOWNLOAD_URL="https://github.com/$REPO/releases/download/$VERSION/lpanel-$VERSION.zip"
+  fi
 fi
 
-if [ -z "$LATEST_RELEASE" ]; then
-  echo "错误：无法获取最新版本信息"
-  exit 1
-fi
-
-VERSION=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
-DOWNLOAD_URL=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | select(.name | test("\\.zip$")) | .browser_download_url')
-
-if [ -z "$DOWNLOAD_URL" ]; then
-  echo "错误：未找到最新版本的下载链接"
-  exit 1
-fi
-
-echo "  最新版本: $VERSION"
+echo "  版本: $VERSION"
 echo "  下载地址: $DOWNLOAD_URL"
 
 echo ""
 echo "[3/8] 下载安装包..."
 mkdir -p "$DOWNLOAD_DIR"
 
-if ! download_with_retry "$DOWNLOAD_URL" "$DOWNLOAD_DIR/lpanel.zip" "false"; then
+download_success=false
+
+if download_with_retry "$DOWNLOAD_URL" "$DOWNLOAD_DIR/lpanel.zip" "false"; then
+  download_success=true
+fi
+
+if [ "$download_success" = "false" ]; then
   echo "  直接下载失败，尝试使用镜像源..."
-  if ! download_with_retry "$DOWNLOAD_URL" "$DOWNLOAD_DIR/lpanel.zip" "true"; then
-    echo "错误：下载安装包失败"
-    exit 1
+  if download_with_retry "$DOWNLOAD_URL" "$DOWNLOAD_DIR/lpanel.zip" "true"; then
+    download_success=true
   fi
+fi
+
+if [ "$download_success" = "false" ]; then
+  echo "  镜像下载失败，尝试直接从镜像站下载..."
+  if download_version_direct "$VERSION" "$DOWNLOAD_DIR/lpanel.zip"; then
+    download_success=true
+  fi
+fi
+
+if [ "$download_success" = "false" ]; then
+  echo "错误：下载安装包失败"
+  echo ""
+  echo "您可以手动下载安装包后上传到服务器："
+  echo "  $DOWNLOAD_URL"
+  echo ""
+  echo "然后运行："
+  echo "  unzip lpanel-$VERSION.zip -d /opt/lpanel"
+  echo "  cd /opt/lpanel/lpanel/server && npm install && npm run prisma:generate"
+  exit 1
 fi
 
 echo "  安装包大小: $(du -h "$DOWNLOAD_DIR/lpanel.zip" | cut -f1)"
