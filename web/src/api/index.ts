@@ -296,6 +296,32 @@ export async function getContainerLogsApi(id: string, tail?: number): Promise<Co
   return request.get(`/containers/${id}/logs`, { params: { tail } })
 }
 
+export interface DirectoryItem {
+  name: string
+  type: 'file' | 'directory'
+  path: string
+}
+
+export async function listDirectoryApi(path: string): Promise<DirectoryItem[]> {
+  return request.get('/containers/compose/directory', { params: { path } })
+}
+
+export async function readComposeFileApi(path: string): Promise<{ content: string }> {
+  return request.get('/containers/compose/file', { params: { path } })
+}
+
+export async function composeUpApi(data: { path?: string; content?: string }) {
+  return request.post('/containers/compose/up', data)
+}
+
+export async function composeDownApi(path: string) {
+  return request.post('/containers/compose/down', { path })
+}
+
+export async function composeLogsApi(path: string): Promise<{ logs: string }> {
+  return request.get('/containers/compose/logs', { params: { path } })
+}
+
 export interface Task {
   id: string
   name: string
@@ -344,6 +370,21 @@ export interface SystemServices {
   mysql: ServiceStatus
 }
 
+export type DockerMirror = 'official' | 'aliyun' | 'daocloud'
+
+export interface InstallationResult {
+  success: boolean
+  message: string
+  logs: string[]
+}
+
+export interface SseEvent {
+  log?: string
+  done?: boolean
+  success?: boolean
+  message?: string
+}
+
 export async function getDockerStatusApi(): Promise<DockerStatus> {
   return request.get('/system/docker/status')
 }
@@ -352,28 +393,95 @@ export async function getServicesStatusApi(): Promise<SystemServices> {
   return request.get('/system/services')
 }
 
-export async function installDockerApi() {
-  return request.post('/system/docker/install')
+export async function installDockerApi(mirror?: DockerMirror, onLog?: (log: string) => void): Promise<{ success: boolean; message: string }> {
+  return makeSseRequest('/system/docker/install', { mirror }, onLog)
 }
 
-export async function installDockerComposeApi() {
-  return request.post('/system/docker/compose/install')
+export async function installDockerComposeApi(onLog?: (log: string) => void): Promise<{ success: boolean; message: string }> {
+  return makeSseRequest('/system/docker/compose/install', {}, onLog)
 }
 
-export async function installNginxApi() {
-  return request.post('/system/nginx/install')
+export async function installNginxApi(onLog?: (log: string) => void): Promise<{ success: boolean; message: string }> {
+  return makeSseRequest('/system/nginx/install', {}, onLog)
 }
 
-export async function installApacheApi() {
-  return request.post('/system/apache/install')
+export async function installApacheApi(onLog?: (log: string) => void): Promise<{ success: boolean; message: string }> {
+  return makeSseRequest('/system/apache/install', {}, onLog)
 }
 
-export async function installPHPApi(version?: string) {
-  return request.post('/system/php/install', { version })
+export async function installPHPApi(version?: string, onLog?: (log: string) => void): Promise<{ success: boolean; message: string }> {
+  return makeSseRequest('/system/php/install', { version }, onLog)
 }
 
-export async function installMySQLApi() {
-  return request.post('/system/mysql/install')
+export async function installMySQLApi(onLog?: (log: string) => void): Promise<{ success: boolean; message: string }> {
+  return makeSseRequest('/system/mysql/install', {}, onLog)
+}
+
+function makeSseRequest(url: string, body: Record<string, unknown>, onLog?: (log: string) => void): Promise<{ success: boolean; message: string }> {
+  return new Promise((resolve) => {
+    const token = localStorage.getItem('access_token')
+    const fullUrl = `/api${url}`
+    let resolved = false
+    let lastProcessedIndex = 0
+    
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', fullUrl, true)
+    xhr.setRequestHeader('Content-Type', 'application/json')
+    if (token) {
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    }
+    
+    xhr.onreadystatechange = () => {
+      if (xhr.readyState === 3 || xhr.readyState === 4) {
+        const responseText = xhr.responseText
+        const newData = responseText.substring(lastProcessedIndex)
+        
+        if (newData) {
+          const lines = newData.split('\n')
+          let currentEvent = ''
+          
+          for (const line of lines) {
+            if (line.trim() === '') {
+              if (currentEvent.startsWith('data: ')) {
+                try {
+                  const data = JSON.parse(currentEvent.substring(6)) as SseEvent
+                  if (data.done !== undefined && !resolved) {
+                    resolved = true
+                    resolve({ success: data.success || false, message: data.message || '' })
+                  } else if (data.log) {
+                    onLog?.(data.log)
+                  }
+                } catch (e) {
+                  console.error('解析 SSE 数据失败', e)
+                }
+              }
+              currentEvent = ''
+            } else if (line.startsWith('data: ')) {
+              currentEvent = line
+            }
+          }
+          
+          lastProcessedIndex = responseText.length
+        }
+      }
+      
+      if (xhr.readyState === 4 && !resolved) {
+        if (xhr.status === 200) {
+          resolve({ success: true, message: '安装完成' })
+        } else {
+          resolve({ success: false, message: '安装失败' })
+        }
+      }
+    }
+    
+    xhr.onerror = () => {
+      if (!resolved) {
+        resolve({ success: false, message: '网络错误' })
+      }
+    }
+    
+    xhr.send(JSON.stringify(body))
+  })
 }
 
 export async function getTaskApi(id: string) {

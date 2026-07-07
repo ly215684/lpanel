@@ -44,7 +44,8 @@ const SUDO_COMMANDS: string[] = [
   '/usr/sbin/nginx',
   '/usr/sbin/apache2',
   '/bin/chmod',
-  '/bin/chown'
+  '/bin/chown',
+  '/usr/sbin/usermod'
 ]
 
 function sanitizeCommand(command: string): string {
@@ -60,15 +61,26 @@ export async function executeCommand(command: string, args: string[] = [], optio
   const sanitizedCommand = sanitizeCommand(command)
   const sanitizedArgs = sanitizeArgs(args)
 
-  if (!ALLOWED_COMMANDS.includes(sanitizedCommand)) {
+  const commandAllowed = ALLOWED_COMMANDS.includes(sanitizedCommand) || 
+    ALLOWED_COMMANDS.some(allowed => allowed.endsWith(`/${sanitizedCommand}`))
+  
+  if (!commandAllowed) {
     logger.warn(`Command not allowed: ${command}`)
     throw new Error('Command not allowed')
   }
 
-  logger.info(`Executing command: ${sanitizedCommand} ${sanitizedArgs.join(' ')}`)
+  let fullCommand = sanitizedCommand
+  if (!sanitizedCommand.startsWith('/')) {
+    const found = ALLOWED_COMMANDS.find(allowed => allowed.endsWith(`/${sanitizedCommand}`))
+    if (found) {
+      fullCommand = found
+    }
+  }
+
+  logger.info(`Executing command: ${fullCommand} ${sanitizedArgs.join(' ')}`)
 
   return new Promise((resolve, reject) => {
-    execFile(sanitizedCommand, sanitizedArgs, options, (error, stdout, stderr) => {
+    execFile(fullCommand, sanitizedArgs, options, (error, stdout, stderr) => {
       const stdoutStr = typeof stdout === 'string' ? stdout : stdout.toString()
       const stderrStr = typeof stderr === 'string' ? stderr : stderr.toString()
       if (error) {
@@ -86,14 +98,25 @@ export async function executeSudoCommand(command: string, args: string[] = [], o
   const sanitizedCommand = sanitizeCommand(command)
   const sanitizedArgs = sanitizeArgs(args)
 
-  if (!SUDO_COMMANDS.includes(sanitizedCommand)) {
+  const commandAllowed = SUDO_COMMANDS.includes(sanitizedCommand) || 
+    SUDO_COMMANDS.some(allowed => allowed.endsWith(`/${sanitizedCommand}`))
+  
+  if (!commandAllowed) {
     logger.warn(`Sudo command not allowed: ${command}`)
     throw new Error('Sudo command not allowed')
   }
 
-  const sudoArgs = ['-n', sanitizedCommand, ...sanitizedArgs]
+  let fullCommand = sanitizedCommand
+  if (!sanitizedCommand.startsWith('/')) {
+    const found = SUDO_COMMANDS.find(allowed => allowed.endsWith(`/${sanitizedCommand}`))
+    if (found) {
+      fullCommand = found
+    }
+  }
 
-  logger.info(`Executing sudo command: sudo -n ${sanitizedCommand} ${sanitizedArgs.join(' ')}`)
+  const sudoArgs = ['-n', fullCommand, ...sanitizedArgs]
+
+  logger.info(`Executing sudo command: sudo -n ${fullCommand} ${sanitizedArgs.join(' ')}`)
 
   return new Promise((resolve, reject) => {
     execFile('/usr/bin/sudo', sudoArgs, options, (error, stdout, stderr) => {
@@ -110,19 +133,41 @@ export async function executeSudoCommand(command: string, args: string[] = [], o
   })
 }
 
-export async function executeShellCommand(command: string): Promise<{ stdout: string; stderr: string }> {
+export async function executeShellCommand(command: string, onOutput?: (output: string) => void): Promise<{ stdout: string; stderr: string }> {
   const sanitized = sanitizeCommand(command)
   
   logger.info(`Executing shell command: ${sanitized}`)
 
   return new Promise((resolve, reject) => {
-    exec(sanitized, (error, stdout, stderr) => {
-      if (error) {
-        logger.error(`Shell command execution failed: ${error.message}`)
-        reject({ stdout, stderr, error })
-      } else {
+    let stdout = ''
+    let stderr = ''
+    
+    const child = exec(sanitized)
+    
+    child.stdout?.on('data', (data) => {
+      const str = typeof data === 'string' ? data : data.toString()
+      stdout += str
+      onOutput?.(str)
+    })
+    
+    child.stderr?.on('data', (data) => {
+      const str = typeof data === 'string' ? data : data.toString()
+      stderr += str
+      onOutput?.(str)
+    })
+    
+    child.on('error', (error) => {
+      logger.error(`Shell command execution failed: ${error.message}`)
+      reject({ stdout, stderr, error })
+    })
+    
+    child.on('close', (code) => {
+      if (code === 0) {
         logger.debug(`Shell command executed successfully: ${stdout}`)
         resolve({ stdout, stderr })
+      } else {
+        logger.error(`Shell command exited with code ${code}`)
+        reject({ stdout, stderr, error: new Error(`Command exited with code ${code}`) })
       }
     })
   })

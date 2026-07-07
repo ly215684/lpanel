@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { getImagesApi, pullImageApi, removeImageApi, getContainersApi, createContainerApi, startContainerApi, stopContainerApi, removeContainerApi, getContainerLogsApi } from '@/api'
+import { ref, onMounted, watch } from 'vue'
+import { getImagesApi, pullImageApi, removeImageApi, getContainersApi, createContainerApi, startContainerApi, stopContainerApi, removeContainerApi, getContainerLogsApi, composeUpApi, composeDownApi, composeLogsApi, listDirectoryApi } from '@/api'
 import { ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElTabs, ElTabPane } from 'element-plus'
 
 interface Image {
@@ -36,6 +36,20 @@ const form = ref({
   env: '',
   command: ''
 })
+
+const composeContent = ref(`version: '3.8'
+services:
+  nginx:
+    image: nginx:latest
+    ports:
+      - "80:80"
+    restart: always`)
+const composeLogs = ref('')
+const showComposeLogs = ref(false)
+
+const currentPath = ref('/')
+const directoryItems = ref<Array<{ name: string; type: 'file' | 'directory'; path: string }>>([])
+const selectedComposePath = ref('')
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -151,9 +165,129 @@ async function viewLogs(container: Container) {
   showLogsDialog.value = true
 }
 
+async function loadDirectory(path: string) {
+  try {
+    directoryItems.value = await listDirectoryApi(path)
+    currentPath.value = path
+  } catch {
+    ElMessage.error('加载目录失败')
+  }
+}
+
+function goBack() {
+  if (currentPath.value !== '/') {
+    const parent = currentPath.value.substring(0, currentPath.value.lastIndexOf('/')) || '/'
+    loadDirectory(parent)
+  }
+}
+
+function getErrorMessage(error: any): string {
+  if (error.response?.data?.message) {
+    return error.response.data.message
+  } else if (error.message) {
+    return error.message
+  }
+  return '操作失败'
+}
+
+function getErrorDetail(error: any): string | undefined {
+  return error.response?.data?.detail
+}
+
+async function selectComposeFile(item: { name: string; type: 'file' | 'directory'; path: string }) {
+  try {
+    selectedComposePath.value = item.path
+    await composeUpApi({ path: item.path })
+    ElMessage.success(`Compose 服务启动成功: ${item.name}`)
+    loadContainers()
+  } catch (error: any) {
+    const message = getErrorMessage(error)
+    const detail = getErrorDetail(error)
+    if (detail) {
+      ElMessage.error(`${message}\n详细信息: ${detail}`)
+    } else {
+      ElMessage.error(message)
+    }
+  }
+}
+
+async function runCompose() {
+  if (selectedComposePath.value) {
+    try {
+      await composeUpApi({ path: selectedComposePath.value })
+      ElMessage.success('Compose 服务启动成功')
+      loadContainers()
+    } catch (error: any) {
+      const message = getErrorMessage(error)
+      const detail = getErrorDetail(error)
+      if (detail) {
+        ElMessage.error(`${message}\n详细信息: ${detail}`)
+      } else {
+        ElMessage.error(message)
+      }
+    }
+  } else if (composeContent.value.trim()) {
+    try {
+      await composeUpApi({ content: composeContent.value })
+      ElMessage.success('Compose 服务启动成功')
+      loadContainers()
+    } catch (error: any) {
+      const message = getErrorMessage(error)
+      const detail = getErrorDetail(error)
+      if (detail) {
+        ElMessage.error(`${message}\n详细信息: ${detail}`)
+      } else {
+        ElMessage.error(message)
+      }
+    }
+  } else {
+    ElMessage.warning('请选择文件或输入内容')
+  }
+}
+
+async function stopCompose() {
+  if (selectedComposePath.value) {
+    try {
+      await composeDownApi(selectedComposePath.value)
+      ElMessage.success('Compose 服务已停止')
+      loadContainers()
+    } catch (error: any) {
+      const message = getErrorMessage(error)
+      const detail = getErrorDetail(error)
+      if (detail) {
+        ElMessage.error(`${message}\n详细信息: ${detail}`)
+      } else {
+        ElMessage.error(message)
+      }
+    }
+  } else {
+    ElMessage.warning('请选择文件')
+  }
+}
+
+async function viewComposeLogs() {
+  if (selectedComposePath.value) {
+    try {
+      const result = await composeLogsApi(selectedComposePath.value)
+      composeLogs.value = result.logs || ''
+    } catch (error: any) {
+      composeLogs.value = `获取日志失败: ${getErrorMessage(error)}`
+    }
+    showComposeLogs.value = true
+  } else {
+    ElMessage.warning('请选择文件')
+  }
+}
+
 onMounted(() => {
   loadImages()
   loadContainers()
+})
+
+watch(activeTab, (newVal) => {
+  if (newVal === 'compose') {
+    loadDirectory('/')
+  }
 })
 </script>
 
@@ -256,6 +390,57 @@ onMounted(() => {
           </div>
         </div>
       </ElTabPane>
+      
+      <ElTabPane label="Compose" name="compose">
+        <div class="tab-content">
+          <div class="compose-layout">
+            <div class="file-browser">
+              <div class="browser-header">
+                <button @click="goBack" :disabled="currentPath === '/'">
+                  <i class="el-icon-back"></i>
+                </button>
+                <span>{{ currentPath }}</span>
+                <button @click="loadDirectory('/')">
+                  <i class="el-icon-home"></i>
+                </button>
+              </div>
+              <div class="browser-list">
+                <div 
+                  v-for="item in directoryItems" 
+                  :key="item.path"
+                  class="browser-item"
+                  :class="item.type"
+                  @click="item.type === 'directory' ? loadDirectory(item.path) : item.name.endsWith('.yml') || item.name.endsWith('.yaml') ? selectComposeFile(item) : null"
+                >
+                  <i :class="item.type === 'directory' ? 'el-icon-folder-opened' : 'el-icon-document'"></i>
+                  <span>{{ item.name }}</span>
+                </div>
+              </div>
+            </div>
+            
+            <div class="compose-editor">
+              <div class="editor-header">
+                <span>手动输入配置</span>
+                <div class="editor-actions">
+                  <button @click="viewComposeLogs" :disabled="!selectedComposePath">
+                    <i class="el-icon-view"></i>
+                    日志
+                  </button>
+                  <button @click="stopCompose" :disabled="!selectedComposePath">
+                    <i class="el-icon-pause"></i>
+                    停止
+                  </button>
+                  <button class="el-button el-button--primary" @click="runCompose">
+                    <i class="el-icon-play"></i>
+                    启动
+                  </button>
+                </div>
+              </div>
+              <textarea v-model="composeContent" class="compose-textarea" placeholder="在此输入 docker-compose.yml 内容，或从左侧直接点击 .yml 文件运行"></textarea>
+            </div>
+          </div>
+        </div>
+      </ElTabPane>
     </ElTabs>
     
     <ElDialog v-model="showPullDialog" title="拉取镜像" @close="imageName = ''">
@@ -299,6 +484,14 @@ onMounted(() => {
       <template #footer>
         <button @click="showLogsDialog = false">关闭</button>
         <button class="el-button el-button--primary" @click="viewLogs(selectedContainer!)" :disabled="!selectedContainer">刷新</button>
+      </template>
+    </ElDialog>
+    
+    <ElDialog v-model="showComposeLogs" title="Compose 日志" width="80%">
+      <pre class="logs-content">{{ composeLogs }}</pre>
+      <template #footer>
+        <button @click="showComposeLogs = false">关闭</button>
+        <button class="el-button el-button--primary" @click="viewComposeLogs">刷新</button>
       </template>
     </ElDialog>
   </div>
@@ -516,5 +709,146 @@ th {
   font-family: monospace;
   font-size: 13px;
   white-space: pre-wrap;
+}
+
+.compose-layout {
+  display: flex;
+  gap: 20px;
+  height: 500px;
+}
+
+.file-browser {
+  width: 300px;
+  background: #fafafa;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+.browser-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  background: #fff;
+  border-bottom: 1px solid #f0f0f0;
+  border-radius: 8px 8px 0 0;
+}
+
+.browser-header button {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: #f0f0f0;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.browser-header button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.browser-header span {
+  flex: 1;
+  font-size: 13px;
+  color: #666;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.browser-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s;
+  font-size: 13px;
+}
+
+.browser-item:hover {
+  background: #f0f0f0;
+}
+
+.browser-item.directory {
+  color: #409eff;
+}
+
+.browser-item.file {
+  color: #666;
+}
+
+.compose-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #f0f0f0;
+}
+
+.editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: #fafafa;
+  border-bottom: 1px solid #f0f0f0;
+  border-radius: 8px 8px 0 0;
+}
+
+.editor-header span {
+  font-size: 13px;
+  color: #666;
+}
+
+.editor-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.editor-actions button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: none;
+  background: #f0f0f0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.editor-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.compose-textarea {
+  flex: 1;
+  padding: 16px;
+  border: none;
+  resize: none;
+  font-family: monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  background: #fff;
+  border-radius: 0 0 8px 8px;
+}
+
+.compose-textarea:focus {
+  outline: none;
 }
 </style>

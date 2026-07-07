@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { ElButton, ElCard, ElBadge, ElMessage, ElSelect, ElOption } from 'element-plus'
+import { ElButton, ElCard, ElBadge, ElMessage, ElSelect, ElOption, ElScrollbar } from 'element-plus'
 import { getServicesStatusApi, installDockerApi, installDockerComposeApi, installNginxApi, installApacheApi, installPHPApi, installMySQLApi, type SystemServices } from '@/api'
 
 const services = ref<SystemServices | null>(null)
@@ -15,8 +15,33 @@ const installing = ref<Record<string, boolean>>({
   mysql: false
 })
 
+const installationLogs = ref<Record<string, string[]>>({
+  docker: [],
+  compose: [],
+  nginx: [],
+  apache: [],
+  php: [],
+  mysql: []
+})
+
+const showLogs = ref<Record<string, boolean>>({
+  docker: false,
+  compose: false,
+  nginx: false,
+  apache: false,
+  php: false,
+  mysql: false
+})
+
 const phpVersion = ref('8.3')
 const phpVersions = ['7.4', '8.0', '8.1', '8.2', '8.3']
+
+const dockerMirror = ref<'official' | 'aliyun' | 'daocloud'>('official')
+const dockerMirrors = [
+  { value: 'official', label: '官方镜像' },
+  { value: 'aliyun', label: '阿里云镜像' },
+  { value: 'daocloud', label: 'DaoCloud镜像' }
+]
 
 async function loadServices() {
   loading.value = true
@@ -31,35 +56,47 @@ async function loadServices() {
 
 async function handleInstall(service: string) {
   installing.value[service] = true
+  showLogs.value[service] = true
+  installationLogs.value[service] = []
+  
   try {
+    const onLog = (log: string) => {
+      installationLogs.value[service].push(log)
+    }
+    
+    let result: { success: boolean; message: string }
+    
     switch (service) {
       case 'docker':
-        await installDockerApi()
-        ElMessage.success('Docker 安装成功')
+        result = await installDockerApi(dockerMirror.value, onLog)
         break
       case 'compose':
-        await installDockerComposeApi()
-        ElMessage.success('Docker Compose 安装成功')
+        result = await installDockerComposeApi(onLog)
         break
       case 'nginx':
-        await installNginxApi()
-        ElMessage.success('Nginx 安装成功')
+        result = await installNginxApi(onLog)
         break
       case 'apache':
-        await installApacheApi()
-        ElMessage.success('Apache 安装成功')
+        result = await installApacheApi(onLog)
         break
       case 'php':
-        await installPHPApi(phpVersion.value)
-        ElMessage.success(`PHP ${phpVersion.value} 安装成功`)
+        result = await installPHPApi(phpVersion.value, onLog)
         break
       case 'mysql':
-        await installMySQLApi()
-        ElMessage.success('MySQL 安装成功')
+        result = await installMySQLApi(onLog)
         break
+      default:
+        throw new Error('未知服务')
     }
-    await loadServices()
+    
+    if (result.success) {
+      ElMessage.success(result.message)
+      await loadServices()
+    } else {
+      ElMessage.error(result.message)
+    }
   } catch (error: any) {
+    installationLogs.value[service].push(`[ERROR] ${error.message}`)
     ElMessage.error('安装失败: ' + error.message)
   } finally {
     installing.value[service] = false
@@ -72,6 +109,19 @@ function getStatusBadge(status: boolean, type: 'installed' | 'running') {
   const text = type === 'installed' ? (status ? '已安装' : '未安装') : (status ? '运行中' : '已停止')
   const badgeType: BadgeType = status ? 'success' : (type === 'installed' ? 'danger' : 'warning')
   return { text, badgeType }
+}
+
+function toggleLogs(service: string) {
+  showLogs.value[service] = !showLogs.value[service]
+}
+
+function getLogClass(log: string): string {
+  if (log.includes('[ERROR]')) return 'log-error'
+  if (log.includes('[SUCCESS]')) return 'log-success'
+  if (log.includes('[STEP]')) return 'log-step'
+  if (log.includes('[DONE]')) return 'log-done'
+  if (log.includes('[INFO]')) return 'log-info'
+  return 'log-default'
 }
 
 onMounted(() => {
@@ -109,9 +159,27 @@ onMounted(() => {
         </div>
 
         <div class="action-buttons">
-          <ElButton v-if="!services?.docker.installed" type="primary" :loading="installing.docker" @click="handleInstall('docker')">安装 Docker</ElButton>
+          <div v-if="!services?.docker.installed" class="install-with-select">
+            <ElSelect v-model="dockerMirror" placeholder="选择镜像源" style="width: 140px; margin-right: 10px;">
+              <ElOption v-for="mirror in dockerMirrors" :key="mirror.value" :label="mirror.label" :value="mirror.value" />
+            </ElSelect>
+            <ElButton type="primary" :loading="installing.docker" @click="handleInstall('docker')">安装 Docker</ElButton>
+          </div>
           <ElButton v-if="services?.docker.installed && !services?.docker.composeInstalled" type="primary" :loading="installing.compose" @click="handleInstall('compose')">安装 Compose</ElButton>
           <ElButton v-if="services?.docker.installed && services?.docker.composeInstalled" type="success" disabled>已安装</ElButton>
+          <ElButton v-if="installationLogs.docker.length > 0" type="text" @click="toggleLogs('docker')">
+            {{ showLogs.docker ? '隐藏日志' : '查看日志' }}
+          </ElButton>
+        </div>
+
+        <div v-if="showLogs.docker && installationLogs.docker.length > 0" class="installation-logs">
+          <ElScrollbar height="200px" class="logs-scroll">
+            <div class="logs-content">
+              <div v-for="(log, index) in installationLogs.docker" :key="index" :class="getLogClass(log)">
+                {{ log }}
+              </div>
+            </div>
+          </ElScrollbar>
         </div>
       </ElCard>
 
@@ -135,6 +203,19 @@ onMounted(() => {
         <div class="action-buttons">
           <ElButton v-if="!services?.nginx.installed" type="primary" :loading="installing.nginx" @click="handleInstall('nginx')">安装 Nginx</ElButton>
           <ElButton v-else type="success" disabled>已安装</ElButton>
+          <ElButton v-if="installationLogs.nginx.length > 0" type="text" @click="toggleLogs('nginx')">
+            {{ showLogs.nginx ? '隐藏日志' : '查看日志' }}
+          </ElButton>
+        </div>
+
+        <div v-if="showLogs.nginx && installationLogs.nginx.length > 0" class="installation-logs">
+          <ElScrollbar height="200px" class="logs-scroll">
+            <div class="logs-content">
+              <div v-for="(log, index) in installationLogs.nginx" :key="index" :class="getLogClass(log)">
+                {{ log }}
+              </div>
+            </div>
+          </ElScrollbar>
         </div>
       </ElCard>
 
@@ -158,6 +239,19 @@ onMounted(() => {
         <div class="action-buttons">
           <ElButton v-if="!services?.apache.installed" type="primary" :loading="installing.apache" @click="handleInstall('apache')">安装 Apache</ElButton>
           <ElButton v-else type="success" disabled>已安装</ElButton>
+          <ElButton v-if="installationLogs.apache.length > 0" type="text" @click="toggleLogs('apache')">
+            {{ showLogs.apache ? '隐藏日志' : '查看日志' }}
+          </ElButton>
+        </div>
+
+        <div v-if="showLogs.apache && installationLogs.apache.length > 0" class="installation-logs">
+          <ElScrollbar height="200px" class="logs-scroll">
+            <div class="logs-content">
+              <div v-for="(log, index) in installationLogs.apache" :key="index" :class="getLogClass(log)">
+                {{ log }}
+              </div>
+            </div>
+          </ElScrollbar>
         </div>
       </ElCard>
 
@@ -186,6 +280,19 @@ onMounted(() => {
             <ElButton type="primary" :loading="installing.php" @click="handleInstall('php')">安装 PHP</ElButton>
           </div>
           <ElButton v-else type="success" disabled>已安装</ElButton>
+          <ElButton v-if="installationLogs.php.length > 0" type="text" @click="toggleLogs('php')">
+            {{ showLogs.php ? '隐藏日志' : '查看日志' }}
+          </ElButton>
+        </div>
+
+        <div v-if="showLogs.php && installationLogs.php.length > 0" class="installation-logs">
+          <ElScrollbar height="200px" class="logs-scroll">
+            <div class="logs-content">
+              <div v-for="(log, index) in installationLogs.php" :key="index" :class="getLogClass(log)">
+                {{ log }}
+              </div>
+            </div>
+          </ElScrollbar>
         </div>
       </ElCard>
 
@@ -209,6 +316,19 @@ onMounted(() => {
         <div class="action-buttons">
           <ElButton v-if="!services?.mysql.installed" type="primary" :loading="installing.mysql" @click="handleInstall('mysql')">安装 MySQL</ElButton>
           <ElButton v-else type="success" disabled>已安装</ElButton>
+          <ElButton v-if="installationLogs.mysql.length > 0" type="text" @click="toggleLogs('mysql')">
+            {{ showLogs.mysql ? '隐藏日志' : '查看日志' }}
+          </ElButton>
+        </div>
+
+        <div v-if="showLogs.mysql && installationLogs.mysql.length > 0" class="installation-logs">
+          <ElScrollbar height="200px" class="logs-scroll">
+            <div class="logs-content">
+              <div v-for="(log, index) in installationLogs.mysql" :key="index" :class="getLogClass(log)">
+                {{ log }}
+              </div>
+            </div>
+          </ElScrollbar>
         </div>
       </ElCard>
     </div>
@@ -356,5 +476,47 @@ onMounted(() => {
   text-align: center;
   padding: 20px;
   color: #999;
+}
+
+.installation-logs {
+  margin-top: 15px;
+  padding: 10px;
+  background-color: #f8f9fa;
+  border-radius: 6px;
+  border: 1px solid #e9ecef;
+}
+
+.logs-scroll {
+  border-radius: 4px;
+}
+
+.logs-content {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.log-error {
+  color: #dc3545;
+}
+
+.log-success {
+  color: #28a745;
+}
+
+.log-step {
+  color: #007bff;
+}
+
+.log-done {
+  color: #17a2b8;
+}
+
+.log-info {
+  color: #6c757d;
+}
+
+.log-default {
+  color: #333;
 }
 </style>

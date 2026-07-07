@@ -1,4 +1,5 @@
 import { executeSudoCommand } from '../core/command'
+import { executeShellCommand } from '../core/command'
 
 export async function getImages() {
   const result = await executeSudoCommand('/usr/bin/docker', ['images'])
@@ -82,5 +83,43 @@ export async function removeContainer(containerId: string) {
 
 export async function getContainerLogs(containerId: string, tail: number = 100) {
   const result = await executeSudoCommand('/usr/bin/docker', ['logs', '--tail', tail.toString(), containerId])
+  return result.stdout
+}
+
+export async function listDirectory(path: string): Promise<Array<{ name: string; type: 'file' | 'directory'; path: string }>> {
+  const result = await executeShellCommand(`ls -la "${path}"`)
+  const lines = result.stdout.split('\n').slice(1)
+  
+  return lines.map(line => {
+    const parts = line.trim().split(/\s+/)
+    const type: 'file' | 'directory' = parts[0]?.startsWith('d') ? 'directory' : 'file'
+    const name = parts.slice(8).join(' ')
+    return {
+      name,
+      type,
+      path: `${path}/${name}`
+    }
+  }).filter(item => item.name && item.name !== '.' && item.name !== '..')
+}
+
+export async function readComposeFile(path: string): Promise<string> {
+  const result = await executeShellCommand(`cat "${path}"`)
+  return result.stdout
+}
+
+export async function composeUp(path: string) {
+  const dir = path.substring(0, path.lastIndexOf('/'))
+  const file = path.substring(path.lastIndexOf('/') + 1)
+  await executeSudoCommand('/usr/bin/docker', ['compose', '-f', path, '-p', 'lpanel-compose', 'up', '-d'], { cwd: dir })
+}
+
+export async function composeDown(path: string) {
+  const dir = path.substring(0, path.lastIndexOf('/'))
+  await executeSudoCommand('/usr/bin/docker', ['compose', '-f', path, '-p', 'lpanel-compose', 'down'], { cwd: dir })
+}
+
+export async function composeLogs(path: string) {
+  const dir = path.substring(0, path.lastIndexOf('/'))
+  const result = await executeSudoCommand('/usr/bin/docker', ['compose', '-f', path, '-p', 'lpanel-compose', 'logs', '--tail', '100'], { cwd: dir })
   return result.stdout
 }

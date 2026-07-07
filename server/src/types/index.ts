@@ -115,7 +115,8 @@ export const PERMISSIONS: RolePermissions = {
     { action: 'manage', resource: 'databases' },
     { action: 'manage', resource: 'files' },
     { action: 'manage', resource: 'containers' },
-    { action: 'manage', resource: 'tasks' }
+    { action: 'manage', resource: 'tasks' },
+    { action: 'manage', resource: 'system' }
   ],
   user: [
     { action: 'view', resource: 'monitor' },
