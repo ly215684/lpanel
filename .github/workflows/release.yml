@@ -44,13 +44,16 @@ jobs:
         run: cp -r web/dist server/public
 
       - name: Create release directory
-        run: mkdir -p release/lpanel
+        run: mkdir -p release/lpanel/server
 
-      - name: Copy server files to release
-        run: cp -r server release/lpanel/
+      - name: Copy dist to release
+        run: cp -r server/dist release/lpanel/server/
 
-      - name: Remove node_modules from release
-        run: rm -rf release/lpanel/server/node_modules
+      - name: Copy package.json to release
+        run: cp server/package.json release/lpanel/server/
+
+      - name: Copy prisma to release
+        run: cp -r server/prisma release/lpanel/server/
 
       - name: Copy scripts to release
         run: cp -r scripts release/lpanel/
