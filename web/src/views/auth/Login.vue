@@ -59,7 +59,7 @@ async function handleLogin() {
             class="form-input"
           />
         </div>
-        <button type="submit" class="login-btn" :loading="loading">
+        <button type="submit" class="login-btn" :class="{ 'is-loading': loading }" :disabled="loading">
           {{ loading ? '登录中...' : '登录' }}
         </button>
         <div class="login-tip">
@@ -171,7 +171,8 @@ async function handleLogin() {
   background: #66b1ff;
 }
 
-.login-btn[loading] {
+.login-btn.is-loading,
+.login-btn:disabled {
   background: #8cc5ff;
   cursor: not-allowed;
 }

@@ -47,11 +47,9 @@ export const useAuthStore = defineStore('auth', () => {
     if (refreshToken.value) {
       await logoutApi(refreshToken.value)
     }
-    
     accessToken.value = null
     refreshToken.value = null
     user.value = null
-    
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
   }

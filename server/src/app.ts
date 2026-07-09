@@ -70,6 +70,13 @@ async function main() {
     return reply.sendFile('index.html')
   })
 
+  await initAdmin().catch(err => {
+    logger.error('Failed to initialize admin user:', err)
+  })
+  await initTasks().catch(err => {
+    logger.error('Failed to initialize tasks:', err)
+  })
+
   await fastify.listen({ port: env.PORT, host: env.HOST })
 
   const io = new Server(fastify.server, {
@@ -79,9 +86,6 @@ async function main() {
   })
 
   setupMonitorSocket(io)
-
-  await initAdmin()
-  await initTasks()
 
   logger.info(`Server listening on http://${env.HOST}:${env.PORT}`)
 }

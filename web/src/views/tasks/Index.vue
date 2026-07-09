@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { getTasksApi, createTaskApi, updateTaskApi, deleteTaskApi, runTaskApi, getTaskExecutionsApi } from '@/api'
-import { ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElSelect, ElSwitch } from 'element-plus'
+import { getTasksApi, createTaskApi, updateTaskApi, deleteTaskApi, runTaskApi, getTaskExecutionsApi, listFilesApi } from '@/api'
+import { ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElSwitch } from 'element-plus'
 
 interface Task {
   id: string
@@ -24,6 +24,12 @@ interface TaskExecution {
   finished_at?: string
 }
 
+interface BrowserItem {
+  name: string
+  path: string
+  type: 'file' | 'directory'
+}
+
 const tasks = ref<Task[]>([])
 const executions = ref<TaskExecution[]>([])
 const showCreateDialog = ref(false)
@@ -37,10 +43,67 @@ const form = ref({
   command: ''
 })
 
+const showFileBrowser = ref(false)
+const browserCurrentPath = ref('/')
+const browserItems = ref<BrowserItem[]>([])
+const browserPathHistory = ref<string[]>([])
+const browserLoading = ref(false)
+
 function formatCron(cron: string): string {
   const parts = cron.split(' ')
   if (parts.length !== 5) return cron
   return `${parts[0]} ${parts[1]} ${parts[2]} ${parts[3]} ${parts[4]}`
+}
+
+async function browseTo(path: string) {
+  browserLoading.value = true
+  try {
+    const items = await listFilesApi(path)
+    const dirs = items.filter(item => item.type === 'directory').map(item => ({ name: item.name, path: item.path, type: item.type }))
+    const files = items.filter(item => item.type === 'file').map(item => ({ name: item.name, path: item.path, type: item.type }))
+    browserItems.value = [...dirs, ...files]
+    if (browserCurrentPath.value !== path) {
+      browserPathHistory.value.push(browserCurrentPath.value)
+    }
+    browserCurrentPath.value = path
+  } catch {
+    ElMessage.error('读取目录失败')
+  } finally {
+    browserLoading.value = false
+  }
+}
+
+function browseBack() {
+  if (browserPathHistory.value.length > 0) {
+    const prevPath = browserPathHistory.value.pop()!
+    browseTo(prevPath)
+  }
+}
+
+function browseUp() {
+  const current = browserCurrentPath.value
+  if (current === '/' || current === '') return
+  const parts = current.split('/').filter(Boolean)
+  parts.pop()
+  const parentPath = parts.length === 0 ? '/' : '/' + parts.join('/')
+  browseTo(parentPath)
+}
+
+function selectBrowserItem(item: BrowserItem) {
+  if (item.type === 'directory') {
+    browseTo(item.path)
+  } else {
+    form.value.command = item.path
+    showFileBrowser.value = false
+  }
+}
+
+function openFileBrowser() {
+  browserCurrentPath.value = '/'
+  browserItems.value = []
+  browserPathHistory.value = []
+  showFileBrowser.value = true
+  browseTo('/')
 }
 
 async function loadTasks() {
@@ -180,7 +243,7 @@ onMounted(() => {
           <tr v-for="task in tasks" :key="task.id">
             <td>{{ task.name }}</td>
             <td>
-              <span class="type-tag">{{ task.type === 'backup' ? '备份' : task.type === 'command' ? '命令' : task.type }}</span>
+              <span class="type-tag">{{ task.type === 'backup' ? '备份' : task.type === 'command' ? '命令' : task.type === 'script' ? '脚本' : task.type }}</span>
             </td>
             <td>{{ formatCron(task.cron_expression) }}</td>
             <td>
@@ -231,21 +294,37 @@ onMounted(() => {
           <ElInput v-model="form.name" placeholder="请输入任务名称" />
         </ElFormItem>
         <ElFormItem label="任务类型">
-          <ElSelect v-model="form.type">
-            <option value="backup">备份任务</option>
-            <option value="command">命令执行</option>
+          <ElSelect v-model="form.type" placeholder="请选择任务类型">
+            <ElOption label="备份任务" value="backup" />
+            <ElOption label="命令执行" value="command" />
+            <ElOption label="脚本任务" value="script" />
           </ElSelect>
         </ElFormItem>
         <ElFormItem label="Cron表达式">
           <ElInput v-model="form.cron_expression" placeholder="如: 0 0 * * *" />
           <div class="cron-hint">格式: 分 时 日 月 周</div>
         </ElFormItem>
-        <ElFormItem label="执行命令">
-          <ElInput v-model="form.command" placeholder="任务类型为命令执行时必填" />
+        <ElFormItem :label="form.type === 'script' ? '脚本路径' : '执行命令'">
+          <div v-if="form.type === 'script'" class="script-input-group">
+            <ElInput 
+              v-model="form.command" 
+              placeholder="如: /opt/scripts/backup.sh" 
+            />
+            <button class="browse-btn" @click="openFileBrowser">
+              <i class="el-icon-folder-opened"></i>
+              浏览
+            </button>
+          </div>
+          <ElInput 
+            v-else
+            v-model="form.command" 
+            placeholder="任务类型为命令执行时必填" 
+          />
+          <div v-if="form.type === 'script'" class="cron-hint">点击浏览选择服务器上的 .sh 脚本文件，执行前会自动添加执行权限</div>
         </ElFormItem>
       </ElForm>
       <template #footer>
-        <button @click="showCreateDialog = false">取消</button>
+        <button class="el-button" @click="showCreateDialog = false">取消</button>
         <button class="el-button el-button--primary" @click="createTask">确定</button>
       </template>
     </ElDialog>
@@ -256,21 +335,78 @@ onMounted(() => {
           <ElInput v-model="form.name" placeholder="请输入任务名称" />
         </ElFormItem>
         <ElFormItem label="任务类型">
-          <ElSelect v-model="form.type">
-            <option value="backup">备份任务</option>
-            <option value="command">命令执行</option>
+          <ElSelect v-model="form.type" placeholder="请选择任务类型">
+            <ElOption label="备份任务" value="backup" />
+            <ElOption label="命令执行" value="command" />
+            <ElOption label="脚本任务" value="script" />
           </ElSelect>
         </ElFormItem>
         <ElFormItem label="Cron表达式">
           <ElInput v-model="form.cron_expression" placeholder="如: 0 0 * * *" />
         </ElFormItem>
-        <ElFormItem label="执行命令">
-          <ElInput v-model="form.command" placeholder="任务类型为命令执行时必填" />
+        <ElFormItem :label="form.type === 'script' ? '脚本路径' : '执行命令'">
+          <div v-if="form.type === 'script'" class="script-input-group">
+            <ElInput 
+              v-model="form.command" 
+              placeholder="如: /opt/scripts/backup.sh" 
+            />
+            <button class="browse-btn" @click="openFileBrowser">
+              <i class="el-icon-folder-opened"></i>
+              浏览
+            </button>
+          </div>
+          <ElInput 
+            v-else
+            v-model="form.command" 
+            placeholder="任务类型为命令执行时必填" 
+          />
+          <div v-if="form.type === 'script'" class="cron-hint">点击浏览选择服务器上的 .sh 脚本文件，执行前会自动添加执行权限</div>
         </ElFormItem>
       </ElForm>
       <template #footer>
-        <button @click="showEditDialog = false">取消</button>
+        <button class="el-button" @click="showEditDialog = false">取消</button>
         <button class="el-button el-button--primary" @click="saveEdit">确定</button>
+      </template>
+    </ElDialog>
+    
+    <ElDialog v-model="showFileBrowser" title="选择脚本文件" width="550px">
+      <div class="file-browser-content">
+        <div class="browser-toolbar">
+          <button class="browser-tool-btn" @click="browseBack" :disabled="browserPathHistory.length === 0" title="后退">
+            <i class="el-icon-back"></i>
+          </button>
+          <button class="browser-tool-btn" @click="browseUp" :disabled="browserCurrentPath === '/'" title="上一级">
+            <i class="el-icon-top"></i>
+          </button>
+          <button class="browser-tool-btn" @click="browseTo('/')" title="根目录">
+            <i class="el-icon-house"></i>
+          </button>
+          <span class="browser-current-path">{{ browserCurrentPath }}</span>
+          <button class="browser-tool-btn refresh-btn" @click="browseTo(browserCurrentPath)" title="刷新">
+            <i class="el-icon-refresh"></i>
+          </button>
+        </div>
+        
+        <div class="browser-container" v-loading="browserLoading">
+          <div v-if="browserItems.length === 0 && !browserLoading" class="browser-empty">
+            <i class="el-icon-folder-opened"></i>
+            <p>该目录下没有文件</p>
+          </div>
+          <div 
+            v-for="item in browserItems" 
+            :key="item.path"
+            :class="['browser-item', item.type, { selected: form.command === item.path }]"
+            @click="selectBrowserItem(item)"
+            @dblclick="item.type === 'directory' && browseTo(item.path)"
+          >
+            <i :class="item.type === 'directory' ? 'el-icon-folder' : 'el-icon-document'"></i>
+            <span class="browser-item-name">{{ item.name }}</span>
+            <i v-if="item.type === 'directory'" class="el-icon-arrow-right browser-item-arrow"></i>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <button class="el-button" @click="showFileBrowser = false">取消</button>
       </template>
     </ElDialog>
     
@@ -524,5 +660,214 @@ th {
   text-align: center;
   padding: 30px;
   color: #999;
+}
+
+.script-input-group {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.script-input-group :deep(.el-input) {
+  flex: 1;
+}
+
+.browse-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px;
+  border: 1px solid #dcdfe6;
+  background: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #606266;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.browse-btn:hover {
+  border-color: #409eff;
+  color: #409eff;
+  background: #ecf5ff;
+}
+
+.file-browser-content {
+  padding: 0;
+}
+
+.browser-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 12px;
+  background: linear-gradient(180deg, #fafbfc 0%, #f5f7fa 100%);
+  border: 1px solid #e4e7ed;
+  border-radius: 8px 8px 0 0;
+  border-bottom: 1px solid #ebeef5;
+}
+
+.browser-tool-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #606266;
+  font-size: 14px;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.browser-tool-btn:hover:not(:disabled) {
+  background: #ecf5ff;
+  border-color: #b3d8ff;
+  color: #409eff;
+}
+
+.browser-tool-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: #f5f7fa;
+}
+
+.browser-current-path {
+  flex: 1;
+  margin: 0 8px;
+  padding: 6px 12px;
+  background: #fff;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #303133;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+
+.refresh-btn {
+  margin-left: auto;
+}
+
+.browser-container {
+  height: 340px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid #e4e7ed;
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  background: #fff;
+  padding: 8px;
+}
+
+.browser-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.browser-container::-webkit-scrollbar-track {
+  background: #f5f7fa;
+  border-radius: 3px;
+}
+
+.browser-container::-webkit-scrollbar-thumb {
+  background: #c0c4cc;
+  border-radius: 3px;
+}
+
+.browser-container::-webkit-scrollbar-thumb:hover {
+  background: #909399;
+}
+
+.browser-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #c0c4cc;
+  gap: 12px;
+}
+
+.browser-empty i {
+  font-size: 48px;
+  opacity: 0.6;
+}
+
+.browser-empty p {
+  font-size: 13px;
+  margin: 0;
+  color: #909399;
+}
+
+.browser-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 13px;
+  color: #303133;
+  margin-bottom: 2px;
+  border: 1px solid transparent;
+  border-bottom: 1px dashed #b3d8ff;
+}
+
+.browser-item:last-child {
+  margin-bottom: 0;
+  border-bottom: 1px solid transparent;
+}
+
+.browser-item:hover {
+  background: #f5f7fa;
+  border-color: #ebeef5;
+}
+
+.browser-item.selected {
+  background: linear-gradient(90deg, #ecf5ff 0%, #d9ecff 100%);
+  border-color: #b3d8ff;
+  color: #409eff;
+  box-shadow: 0 1px 4px rgba(64, 158, 255, 0.1);
+}
+
+.browser-item.directory {
+  color: #409eff;
+}
+
+.browser-item.directory:hover {
+  background: #ecf5ff;
+  border-color: #d9ecff;
+}
+
+.browser-item i:first-child {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.browser-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-item-arrow {
+  color: #dcdfe6;
+  font-size: 12px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.browser-item:hover .browser-item-arrow,
+.browser-item.selected .browser-item-arrow {
+  opacity: 1;
 }
 </style>

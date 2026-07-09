@@ -88,7 +88,7 @@ export interface CreateDatabaseRequest {
 
 export interface CreateTaskRequest {
   name: string
-  type: 'backup' | 'command' | 'custom'
+  type: 'backup' | 'command' | 'script'
   cron_expression: string
   command?: string
 }

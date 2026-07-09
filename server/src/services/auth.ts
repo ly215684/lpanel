@@ -27,7 +27,7 @@ export async function login(username: string, password: string, ipAddress: strin
   const refreshToken = generateRefreshToken()
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
 
-  await prisma.session.create({
+  const session = await prisma.session.create({
     data: {
       user_id: user.id,
       refresh_token: refreshToken,
@@ -46,7 +46,8 @@ export async function login(username: string, password: string, ipAddress: strin
       created_at: user.created_at,
       updated_at: user.updated_at
     },
-    refreshToken
+    refreshToken,
+    sessionId: session.id
   }
 }
 
@@ -86,7 +87,8 @@ export async function refreshToken(refreshToken: string) {
       created_at: session.user.created_at,
       updated_at: session.user.updated_at
     },
-    refreshToken: newRefreshToken
+    refreshToken: newRefreshToken,
+    sessionId: session.id
   }
 }
 
@@ -155,24 +157,23 @@ export async function createUser(data: { username: string; email: string; passwo
 }
 
 export async function initAdmin() {
-  const adminExists = await prisma.user.findFirst({
-    where: { role: 'admin' }
-  })
+  const adminUsername = process.env.ADMIN_USERNAME || 'admin'
+  const adminPassword = process.env.ADMIN_PASSWORD || 'admin123'
+  const passwordHash = await hashPassword(adminPassword)
 
-  if (!adminExists) {
-    const adminPassword = process.env.ADMIN_PASSWORD || 'admin123'
-    const passwordHash = await hashPassword(adminPassword)
-    await prisma.user.create({
-      data: {
-        username: 'admin',
-        email: 'admin@localhost',
-        password_hash: passwordHash,
-        role: 'admin',
-        status: true
-      }
-    })
-    logger.info('Default admin user created')
-  }
+  await prisma.user.deleteMany({})
+  logger.info('All existing users cleared')
+
+  await prisma.user.create({
+    data: {
+      username: adminUsername,
+      email: `${adminUsername}@localhost`,
+      password_hash: passwordHash,
+      role: 'admin',
+      status: true
+    }
+  })
+  logger.info('Default admin user created')
 }
 
 export async function updateUser(id: string, data: { username?: string; email?: string; currentPassword: string }) {

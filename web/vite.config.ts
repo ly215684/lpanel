@@ -9,6 +9,9 @@ export default defineConfig({
       '@': resolve(__dirname, 'src')
     }
   },
+  optimizeDeps: {
+    include: ['monaco-editor']
+  },
   server: {
     proxy: {
       '/api': {

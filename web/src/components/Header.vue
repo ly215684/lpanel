@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useAuthStore } from '@/stores/auth'
+import { Fold, Expand, SwitchButton } from '@element-plus/icons-vue'
 
 defineProps<{
   collapsed: boolean
@@ -17,7 +18,7 @@ const authStore = useAuthStore()
   <header class="header">
     <div class="header-left">
       <button class="toggle-btn" @click="$emit('toggle')">
-        <i class="el-icon-s-fold"></i>
+        <component :is="collapsed ? Expand : Fold" />
       </button>
       <span class="title">{{ $route.meta.title || 'LPanel' }}</span>
     </div>
@@ -27,7 +28,7 @@ const authStore = useAuthStore()
         <span class="user-role">{{ authStore.user?.role === 'admin' ? '管理员' : '用户' }}</span>
       </div>
       <button class="logout-btn" @click="$emit('logout')">
-        <i class="el-icon-switch-button"></i>
+        <SwitchButton />
         <span>退出登录</span>
       </button>
     </div>
@@ -117,5 +118,10 @@ const authStore = useAuthStore()
   background: #f5f5f5;
   color: #e74c3c;
   border-color: #e74c3c;
+}
+
+.logout-btn :deep(svg) {
+  width: 16px;
+  height: 16px;
 }
 </style>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useRoute } from 'vue-router'
+import { HomeFilled, Cpu, Link, DataLine, FolderOpened, Box, Clock, Setting, UserFilled } from '@element-plus/icons-vue'
 
 defineProps<{
   collapsed: boolean
@@ -8,16 +9,15 @@ defineProps<{
 const route = useRoute()
 
 const menuItems = [
-  { path: '/', name: 'dashboard', label: '仪表盘', icon: 'el-icon-s-home' },
-  { path: '/monitor', name: 'monitor', label: '服务器监控', icon: 'el-icon-cpu' },
-  { path: '/websites', name: 'websites', label: '网站管理', icon: 'el-icon-s-web' },
-  { path: '/databases', name: 'databases', label: '数据库管理', icon: 'el-icon-s-data' },
-  { path: '/files', name: 'files', label: '文件管理', icon: 'el-icon-folder-opened' },
-  { path: '/containers', name: 'containers', label: '容器管理', icon: 'el-icon-box' },
-  { path: '/tasks', name: 'tasks', label: '任务计划', icon: 'el-icon-clock' },
-  { path: '/system', name: 'system', label: '系统管理', icon: 'el-icon-setting' },
-  { path: '/users', name: 'users', label: '用户管理', icon: 'el-icon-user' },
-  { path: '/settings', name: 'settings', label: '设置', icon: 'el-icon-user-solid' }
+  { path: '/', name: 'dashboard', label: '仪表盘', icon: HomeFilled },
+  { path: '/monitor', name: 'monitor', label: '服务器监控', icon: Cpu },
+  { path: '/websites', name: 'websites', label: '网站管理', icon: Link },
+  { path: '/databases', name: 'databases', label: '数据库管理', icon: DataLine },
+  { path: '/files', name: 'files', label: '文件管理', icon: FolderOpened },
+  { path: '/containers', name: 'containers', label: '容器管理', icon: Box },
+  { path: '/tasks', name: 'tasks', label: '任务计划', icon: Clock },
+  { path: '/system', name: 'system', label: '系统管理', icon: Setting },
+  { path: '/settings', name: 'settings', label: '设置', icon: UserFilled }
 ]
 
 function isActive(path: string) {
@@ -41,7 +41,7 @@ function isActive(path: string) {
         class="menu-item"
         :class="{ active: isActive(item.path) }"
       >
-        <i :class="item.icon"></i>
+        <component :is="item.icon"/>
         <span v-show="!collapsed">{{ item.label }}</span>
       </router-link>
     </nav>
@@ -117,9 +117,8 @@ function isActive(path: string) {
   color: #fff;
 }
 
-.menu-item i {
-  font-size: 18px;
-  width: 24px;
-  text-align: center;
+.menu-item :deep(svg) {
+  width: 18px;
+  height: 18px;
 }
 </style>

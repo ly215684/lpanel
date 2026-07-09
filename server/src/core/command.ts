@@ -38,6 +38,8 @@ const SUDO_COMMANDS: string[] = [
   '/bin/systemctl',
   '/usr/bin/systemctl',
   '/usr/bin/docker',
+  '/usr/local/bin/docker',
+  '/snap/bin/docker',
   '/usr/bin/mysql',
   '/usr/bin/psql',
   '/usr/bin/nginx',
@@ -49,7 +51,7 @@ const SUDO_COMMANDS: string[] = [
 ]
 
 function sanitizeCommand(command: string): string {
-  const bannedChars = [';', '&', '|', '`', '$', '(', ')', '{', '}', '[', ']', '<', '>', '*', '?', '~', '!']
+  const bannedChars = [';', '`', '$', '(', ')', '{', '}', '[', ']', '*', '?', '~', '!']
   return bannedChars.reduce((acc, char) => acc.replace(new RegExp(`\\${char}`, 'g'), ''), command)
 }
 

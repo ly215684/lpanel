@@ -8,8 +8,14 @@ DOWNLOAD_DIR="/tmp/lpanel-install"
 MAX_RETRIES=10
 RETRY_DELAY=5
 
-generate_random_string() {
-  cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1
+generate_random_username() {
+  local length=$((RANDOM % 2 + 5))
+  cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w "$length" | head -n 1
+}
+
+generate_random_password() {
+  local length=$((RANDOM % 3 + 8))
+  cat /dev/urandom | tr -dc 'a-zA-Z0-9!@#$%^&*_+-=' | fold -w "$length" | head -n 1
 }
 
 generate_random_port() {
@@ -181,6 +187,20 @@ if ! command -v make &> /dev/null; then
   sudo apt install -y build-essential python3
 fi
 
+echo "安装压缩解压工具..."
+if ! command -v tar &> /dev/null; then
+  sudo apt install -y tar
+fi
+if ! command -v gzip &> /dev/null; then
+  sudo apt install -y gzip
+fi
+if ! command -v unzip &> /dev/null; then
+  sudo apt install -y unzip
+fi
+if ! command -v unrar &> /dev/null; then
+  sudo apt install -y unrar
+fi
+
 echo "[2/8] 获取最新版本..."
 
 if [ -n "$SPECIFIC_VERSION" ]; then
@@ -297,7 +317,8 @@ echo ""
 echo "[6/8] 配置数据库..."
 DB_PASSWORD=$(generate_random_string)
 JWT_SECRET=$(generate_random_string)
-ADMIN_PASSWORD=$(generate_random_string)
+ADMIN_USERNAME=$(generate_random_username)
+ADMIN_PASSWORD=$(generate_random_password)
 PANEL_PORT=$(generate_random_port)
 
 sudo -u postgres psql -c "SELECT 1 FROM pg_database WHERE datname='lpanel'" | grep -q 1 || \
@@ -327,6 +348,7 @@ JWT_SECRET="$JWT_SECRET"
 JWT_EXPIRES_IN="24h"
 JWT_REFRESH_EXPIRES_IN="7d"
 
+ADMIN_USERNAME="$ADMIN_USERNAME"
 ADMIN_PASSWORD="$ADMIN_PASSWORD"
 
 LOG_LEVEL="info"
@@ -378,7 +400,7 @@ echo ""
 echo "访问地址: http://$ACCESS_IP:$PANEL_PORT"
 echo ""
 echo "登录凭据:"
-echo "  用户名: admin"
+echo "  用户名: $ADMIN_USERNAME"
 echo "  密码: $ADMIN_PASSWORD"
 echo ""
 echo "服务管理:"

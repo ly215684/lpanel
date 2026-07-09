@@ -2,6 +2,8 @@ import { PrismaClient } from '@prisma/client'
 import { CronJob } from 'cron'
 import { executeShellCommand } from '../core/command'
 import { logger } from '../core/logger'
+import { existsSync, statSync } from 'fs'
+import { resolve } from 'path'
 
 const prisma = new PrismaClient()
 
@@ -71,7 +73,7 @@ export async function getTaskExecutions(taskId: string) {
   return prisma.taskExecution.findMany({ where: { task_id: taskId }, orderBy: { started_at: 'desc' } })
 }
 
-function scheduleTask(task: { id: string; cron_expression: string; command: string | null }) {
+function scheduleTask(task: { id: string; type: string; cron_expression: string; command: string | null }) {
   const job = new CronJob(task.cron_expression, () => {
     executeTask(task)
   })
@@ -80,7 +82,7 @@ function scheduleTask(task: { id: string; cron_expression: string; command: stri
   job.start()
 }
 
-async function executeTask(task: { id: string; command: string | null }) {
+async function executeTask(task: { id: string; type: string; command: string | null }) {
   const execution = await prisma.taskExecution.create({
     data: {
       task_id: task.id,
@@ -90,22 +92,43 @@ async function executeTask(task: { id: string; command: string | null }) {
   })
 
   try {
-    if (task.command) {
-      const result = await executeShellCommand(task.command)
-      await prisma.taskExecution.update({
-        where: { id: execution.id },
-        data: {
-          status: 'success',
-          output: result.stdout,
-          finished_at: new Date()
-        }
-      })
+    let output = ''
 
-      await prisma.task.update({
-        where: { id: task.id },
-        data: { last_run_at: new Date() }
-      })
+    if (task.type === 'script') {
+      if (!task.command) {
+        throw new Error('Shell 脚本路径不能为空')
+      }
+      const scriptPath = resolve(task.command.trim())
+      if (!existsSync(scriptPath)) {
+        throw new Error(`脚本文件不存在: ${scriptPath}`)
+      }
+      const stat = statSync(scriptPath)
+      if (!stat.isFile()) {
+        throw new Error(`路径不是文件: ${scriptPath}`)
+      }
+      await executeShellCommand(`chmod +x "${scriptPath}"`)
+      const result = await executeShellCommand(`bash "${scriptPath}"`)
+      output = result.stdout
+    } else if (task.command) {
+      const result = await executeShellCommand(task.command)
+      output = result.stdout
+    } else {
+      throw new Error('执行命令不能为空')
     }
+
+    await prisma.taskExecution.update({
+      where: { id: execution.id },
+      data: {
+        status: 'success',
+        output,
+        finished_at: new Date()
+      }
+    })
+
+    await prisma.task.update({
+      where: { id: task.id },
+      data: { last_run_at: new Date() }
+    })
   } catch (error: any) {
     await prisma.taskExecution.update({
       where: { id: execution.id },

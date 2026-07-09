@@ -13,7 +13,7 @@ generate_random_port() {
   echo $((RANDOM % 5000 + 8000))
 }
 
-ADMIN_USERNAME="admin"
+ADMIN_USERNAME=$(generate_random_string)
 ADMIN_PASSWORD=$(generate_random_string)
 JWT_SECRET=$(generate_random_string)
 DB_PASSWORD=$(generate_random_string)
@@ -83,7 +83,7 @@ async function createAdmin() {
   await prisma.user.create({
     data: {
       username: '$ADMIN_USERNAME',
-      email: 'admin@localhost',
+      email: '$ADMIN_USERNAME@localhost',
       password_hash: passwordHash,
       role: 'admin',
       status: true

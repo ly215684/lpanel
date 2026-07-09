@@ -10,8 +10,16 @@ const authStore = useAuthStore()
 
 const collapsed = ref(false)
 
-function logout() {
-  authStore.logout()
+async function logout() {
+  try {
+    await authStore.logout()
+  } catch {
+    authStore.accessToken = null
+    authStore.refreshToken = null
+    authStore.user = null
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('refresh_token')
+  }
   router.push('/login')
 }
 </script>

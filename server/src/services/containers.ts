@@ -1,12 +1,21 @@
-import { executeSudoCommand } from '../core/command'
-import { executeShellCommand } from '../core/command'
+import { executeSudoCommand, executeShellCommand } from '../core/command'
+import { existsSync } from 'fs'
+
+function getDockerPath(): string {
+  const paths = ['/usr/bin/docker', '/usr/local/bin/docker', '/snap/bin/docker']
+  for (const p of paths) {
+    if (existsSync(p)) return p
+  }
+  return '/usr/bin/docker'
+}
 
 export async function getImages() {
-  const result = await executeSudoCommand('/usr/bin/docker', ['images'])
-  const lines = result.stdout.split('\n').slice(1)
+  const dockerPath = getDockerPath()
+  const result = await executeSudoCommand(dockerPath, ['images', '--format', '{{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}\t{{.Size}}'])
+  const lines = result.stdout.split('\n').filter(line => line.trim())
 
   const images = lines.map(line => {
-    const parts = line.trim().split(/\s+/)
+    const parts = line.split('\t')
     return {
       repository: parts[0] || '',
       tag: parts[1] || '',
@@ -20,20 +29,23 @@ export async function getImages() {
 }
 
 export async function pullImage(imageName: string) {
-  await executeSudoCommand('/usr/bin/docker', ['pull', imageName])
+  const dockerPath = getDockerPath()
+  await executeSudoCommand(dockerPath, ['pull', imageName])
 }
 
 export async function removeImage(imageId: string) {
-  await executeSudoCommand('/usr/bin/docker', ['rmi', imageId])
+  const dockerPath = getDockerPath()
+  await executeSudoCommand(dockerPath, ['rmi', imageId])
 }
 
 export async function getContainers(all: boolean = false) {
-  const args = all ? ['ps', '-a'] : ['ps']
-  const result = await executeSudoCommand('/usr/bin/docker', args)
-  const lines = result.stdout.split('\n').slice(1)
+  const dockerPath = getDockerPath()
+  const args = all ? ['ps', '-a', '--format', '{{.ID}}\t{{.Image}}\t{{.Command}}\t{{.CreatedAt}}\t{{.Status}}\t{{.Ports}}\t{{.Names}}'] : ['ps', '--format', '{{.ID}}\t{{.Image}}\t{{.Command}}\t{{.CreatedAt}}\t{{.Status}}\t{{.Ports}}\t{{.Names}}']
+  const result = await executeSudoCommand(dockerPath, args)
+  const lines = result.stdout.split('\n').filter(line => line.trim())
 
   const containers = lines.map(line => {
-    const parts = line.trim().split(/\s+/)
+    const parts = line.split('\t')
     return {
       id: parts[0] || '',
       image: parts[1] || '',
@@ -49,6 +61,7 @@ export async function getContainers(all: boolean = false) {
 }
 
 export async function createContainer(data: { image: string; name: string; ports?: string[]; env?: string[]; command?: string }) {
+  const dockerPath = getDockerPath()
   const args = ['run', '-d', '--name', data.name]
 
   if (data.ports) {
@@ -65,31 +78,35 @@ export async function createContainer(data: { image: string; name: string; ports
     args.push(data.command)
   }
 
-  const result = await executeSudoCommand('/usr/bin/docker', args)
+  const result = await executeSudoCommand(dockerPath, args)
   return result.stdout.trim()
 }
 
 export async function startContainer(containerId: string) {
-  await executeSudoCommand('/usr/bin/docker', ['start', containerId])
+  const dockerPath = getDockerPath()
+  await executeSudoCommand(dockerPath, ['start', containerId])
 }
 
 export async function stopContainer(containerId: string) {
-  await executeSudoCommand('/usr/bin/docker', ['stop', containerId])
+  const dockerPath = getDockerPath()
+  await executeSudoCommand(dockerPath, ['stop', containerId])
 }
 
 export async function removeContainer(containerId: string) {
-  await executeSudoCommand('/usr/bin/docker', ['rm', containerId])
+  const dockerPath = getDockerPath()
+  await executeSudoCommand(dockerPath, ['rm', containerId])
 }
 
 export async function getContainerLogs(containerId: string, tail: number = 100) {
-  const result = await executeSudoCommand('/usr/bin/docker', ['logs', '--tail', tail.toString(), containerId])
+  const dockerPath = getDockerPath()
+  const result = await executeSudoCommand(dockerPath, ['logs', '--tail', tail.toString(), containerId])
   return result.stdout
 }
 
 export async function listDirectory(path: string): Promise<Array<{ name: string; type: 'file' | 'directory'; path: string }>> {
   const result = await executeShellCommand(`ls -la "${path}"`)
   const lines = result.stdout.split('\n').slice(1)
-  
+
   return lines.map(line => {
     const parts = line.trim().split(/\s+/)
     const type: 'file' | 'directory' = parts[0]?.startsWith('d') ? 'directory' : 'file'
@@ -108,18 +125,61 @@ export async function readComposeFile(path: string): Promise<string> {
 }
 
 export async function composeUp(path: string) {
+  const dockerPath = getDockerPath()
   const dir = path.substring(0, path.lastIndexOf('/'))
-  const file = path.substring(path.lastIndexOf('/') + 1)
-  await executeSudoCommand('/usr/bin/docker', ['compose', '-f', path, '-p', 'lpanel-compose', 'up', '-d'], { cwd: dir })
+  await executeSudoCommand(dockerPath, ['compose', '-f', path, '-p', 'lpanel-compose', 'up', '-d'], { cwd: dir })
 }
 
 export async function composeDown(path: string) {
+  const dockerPath = getDockerPath()
   const dir = path.substring(0, path.lastIndexOf('/'))
-  await executeSudoCommand('/usr/bin/docker', ['compose', '-f', path, '-p', 'lpanel-compose', 'down'], { cwd: dir })
+  await executeSudoCommand(dockerPath, ['compose', '-f', path, '-p', 'lpanel-compose', 'down'], { cwd: dir })
 }
 
 export async function composeLogs(path: string) {
+  const dockerPath = getDockerPath()
   const dir = path.substring(0, path.lastIndexOf('/'))
-  const result = await executeSudoCommand('/usr/bin/docker', ['compose', '-f', path, '-p', 'lpanel-compose', 'logs', '--tail', '100'], { cwd: dir })
+  const result = await executeSudoCommand(dockerPath, ['compose', '-f', path, '-p', 'lpanel-compose', 'logs', '--tail', '100'], { cwd: dir })
   return result.stdout
+}
+
+export async function getComposeServices(path: string): Promise<Array<{ name: string; state: string; ports: string; image: string }>> {
+  const dockerPath = getDockerPath()
+  const dir = path.substring(0, path.lastIndexOf('/'))
+  const result = await executeSudoCommand(dockerPath, ['compose', '-f', path, '-p', 'lpanel-compose', 'ps'], { cwd: dir })
+  const lines = result.stdout.split('\n').slice(1)
+
+  return lines.map(line => {
+    const parts = line.trim().split(/\s+/)
+    return {
+      name: parts[0] || '',
+      state: parts[3] || '',
+      ports: parts[4] || '',
+      image: parts[2] || ''
+    }
+  }).filter(service => service.name)
+}
+
+export async function composeBuild(path: string) {
+  const dockerPath = getDockerPath()
+  const dir = path.substring(0, path.lastIndexOf('/'))
+  await executeSudoCommand(dockerPath, ['compose', '-f', path, '-p', 'lpanel-compose', 'build'], { cwd: dir })
+}
+
+export async function composePull(path: string) {
+  const dockerPath = getDockerPath()
+  const dir = path.substring(0, path.lastIndexOf('/'))
+  await executeSudoCommand(dockerPath, ['compose', '-f', path, '-p', 'lpanel-compose', 'pull'], { cwd: dir })
+}
+
+export async function composeRestart(path: string) {
+  const dockerPath = getDockerPath()
+  const dir = path.substring(0, path.lastIndexOf('/'))
+  await executeSudoCommand(dockerPath, ['compose', '-f', path, '-p', 'lpanel-compose', 'restart'], { cwd: dir })
+}
+
+export async function composeDownWithVolumes(path: string) {
+  const dockerPath = getDockerPath()
+  const dir = path.substring(0, path.lastIndexOf('/'))
+  await executeSudoCommand(dockerPath, ['compose', '-f', path, '-p', 'lpanel-compose', 'down', '-v'], { cwd: dir })
 }

@@ -160,6 +160,36 @@ export async function changePermissionsApi(path: string, permissions: string) {
   return request.post('/files/chmod', { path, permissions })
 }
 
+export async function searchFilesApi(keyword: string, path?: string, includeSubdirs?: boolean): Promise<FileItem[]> {
+  return request.get('/files/search', { params: { keyword, path, includeSubdirs } })
+}
+
+export async function downloadFileApi(path: string) {
+  return request.get('/files/download', { params: { path }, responseType: 'blob' })
+}
+
+export async function uploadFileApi(file: File, path?: string, relativePath?: string) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request.post('/files/upload', formData, { params: { path, relativePath }, headers: { 'Content-Type': 'multipart/form-data' } })
+}
+
+export async function renameFileApi(path: string, newName: string) {
+  return request.post('/files/rename', { path, newName })
+}
+
+export async function compressFileApi(path: string) {
+  return request.post('/files/compress', { path })
+}
+
+export async function compressFilesApi(paths: string[]) {
+  return request.post('/files/compress', { paths })
+}
+
+export async function extractFileApi(path: string) {
+  return request.post('/files/extract', { path })
+}
+
 export interface Website {
   id: string
   name: string
@@ -320,6 +350,26 @@ export async function composeDownApi(path: string) {
 
 export async function composeLogsApi(path: string): Promise<{ logs: string }> {
   return request.get('/containers/compose/logs', { params: { path } })
+}
+
+export async function getComposeServicesApi(path: string): Promise<Array<{ name: string; state: string; ports: string; image: string }>> {
+  return request.get('/containers/compose/services', { params: { path } })
+}
+
+export async function composeBuildApi(path: string) {
+  return request.post('/containers/compose/build', { path })
+}
+
+export async function composePullApi(path: string) {
+  return request.post('/containers/compose/pull', { path })
+}
+
+export async function composeRestartApi(path: string) {
+  return request.post('/containers/compose/restart', { path })
+}
+
+export async function composeDownWithVolumesApi(path: string) {
+  return request.post('/containers/compose/down-v', { path })
 }
 
 export interface Task {

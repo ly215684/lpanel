@@ -21,12 +21,14 @@ model User {
 }
 
 model Session {
-  id            String   @id @default(uuid())
-  user_id       String
-  refresh_token String   @db.VarChar(255)
-  expires_at    DateTime
-  ip_address    String   @db.VarChar(50)
-  created_at    DateTime @default(now())
+  id                   String   @id @default(uuid())
+  user_id              String
+  refresh_token        String   @db.VarChar(255)
+  access_token         String?  @db.VarChar(500)
+  access_token_expires DateTime?
+  expires_at           DateTime
+  ip_address           String   @db.VarChar(50)
+  created_at           DateTime @default(now())
 
   user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
 }

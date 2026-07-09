@@ -64,12 +64,6 @@ const router = createRouter({
           meta: { title: '系统管理' }
         },
         {
-          path: '/users',
-          name: 'users',
-          component: () => import('@/views/users/Index.vue'),
-          meta: { title: '用户管理' }
-        },
-        {
           path: '/settings',
           name: 'settings',
           component: () => import('@/views/settings/Index.vue'),

@@ -55,6 +55,9 @@ jobs:
       - name: Copy prisma to release
         run: cp -r server/prisma release/lpanel/server/
 
+      - name: Copy public to release
+        run: cp -r server/public release/lpanel/server/
+
       - name: Copy scripts to release
         run: cp -r scripts release/lpanel/
 

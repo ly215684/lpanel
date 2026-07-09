@@ -143,28 +143,107 @@ async function checkPHPStatus(): Promise<ServiceStatus> {
   return result
 }
 
+type DistroType = 'ubuntu' | 'debian' | 'centos' | 'rhel' | 'fedora' | 'unknown'
+
+interface DistroInfo {
+  type: DistroType
+  name: string
+  codename: string
+  version: string
+  packageManager: 'apt' | 'yum' | 'dnf'
+}
+
+async function detectDistro(): Promise<DistroInfo> {
+  const result: DistroInfo = {
+    type: 'unknown',
+    name: 'Unknown',
+    codename: '',
+    version: '',
+    packageManager: 'apt'
+  }
+
+  try {
+    const osReleaseResult = await executeShellCommand('cat /etc/os-release')
+    const osRelease = osReleaseResult.stdout
+
+    const idMatch = osRelease.match(/^ID=(.+)$/m)
+    const idLikeMatch = osRelease.match(/^ID_LIKE=(.+)$/m)
+    const versionIdMatch = osRelease.match(/^VERSION_ID=(.+)$/m)
+    const codenameMatch = osRelease.match(/^VERSION_CODENAME=(.+)$/m)
+    const prettyNameMatch = osRelease.match(/^PRETTY_NAME="(.+)"$/m)
+
+    const id = idMatch ? idMatch[1].replace(/"/g, '').toLowerCase() : ''
+    const idLike = idLikeMatch ? idLikeMatch[1].replace(/"/g, '').toLowerCase() : ''
+
+    if (id === 'ubuntu') {
+      result.type = 'ubuntu'
+      result.name = 'Ubuntu'
+      result.packageManager = 'apt'
+    } else if (id === 'debian') {
+      result.type = 'debian'
+      result.name = 'Debian'
+      result.packageManager = 'apt'
+    } else if (id === 'centos' || idLike.includes('centos')) {
+      result.type = 'centos'
+      result.name = 'CentOS'
+      result.packageManager = 'yum'
+    } else if (id === 'rhel' || idLike.includes('rhel')) {
+      result.type = 'rhel'
+      result.name = 'RHEL'
+      result.packageManager = 'yum'
+    } else if (id === 'fedora') {
+      result.type = 'fedora'
+      result.name = 'Fedora'
+      result.packageManager = 'dnf'
+    } else if (idLike.includes('debian')) {
+      result.type = 'debian'
+      result.name = 'Debian-based'
+      result.packageManager = 'apt'
+    } else if (idLike.includes('rhel') || idLike.includes('fedora')) {
+      result.type = 'rhel'
+      result.name = 'RHEL-based'
+      result.packageManager = 'yum'
+    }
+
+    if (versionIdMatch) {
+      result.version = versionIdMatch[1].replace(/"/g, '')
+    }
+    if (codenameMatch) {
+      result.codename = codenameMatch[1].replace(/"/g, '')
+    }
+    if (prettyNameMatch) {
+      result.name = prettyNameMatch[1]
+    }
+  } catch {
+    try {
+      const aptResult = await executeShellCommand('which apt-get')
+      if (aptResult.stdout) {
+        result.type = 'debian'
+        result.name = 'Debian/Ubuntu'
+        result.packageManager = 'apt'
+      } else {
+        const yumResult = await executeShellCommand('which yum')
+        if (yumResult.stdout) {
+          result.type = 'centos'
+          result.name = 'CentOS/RHEL'
+          result.packageManager = 'yum'
+        } else {
+          const dnfResult = await executeShellCommand('which dnf')
+          if (dnfResult.stdout) {
+            result.type = 'fedora'
+            result.name = 'Fedora'
+            result.packageManager = 'dnf'
+          }
+        }
+      }
+    } catch {}
+  }
+
+  return result
+}
+
 export async function installDocker(mirror: 'official' | 'aliyun' | 'daocloud' = 'official', logCallback?: LogCallback): Promise<InstallationResult> {
   const logs: string[] = []
-  
-  const mirrors = {
-    official: {
-      name: '官方镜像',
-      gpgUrl: 'https://download.docker.com/linux/ubuntu/gpg',
-      repoUrl: 'https://download.docker.com/linux'
-    },
-    aliyun: {
-      name: '阿里云镜像',
-      gpgUrl: 'https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg',
-      repoUrl: 'https://mirrors.aliyun.com/docker-ce/linux'
-    },
-    daocloud: {
-      name: 'DaoCloud镜像',
-      gpgUrl: 'https://download.docker.com/linux/ubuntu/gpg',
-      repoUrl: 'https://mirrors.daocloud.io/docker-ce/linux'
-    }
-  }
-  
-  const selectedMirror = mirrors[mirror] || mirrors.official
   
   const pushLog = (log: string) => {
     logs.push(log)
@@ -173,63 +252,75 @@ export async function installDocker(mirror: 'official' | 'aliyun' | 'daocloud' =
   
   try {
     logger.info('Starting Docker installation')
-    pushLog(`[INFO] 开始安装 Docker (镜像源: ${selectedMirror.name})`)
+    pushLog('[INFO] 开始安装 Docker')
 
-    pushLog('[STEP] 执行 apt-get update...')
-    await executeShellCommand('apt-get update', pushLog)
-    pushLog('[DONE] apt-get update 完成')
+    pushLog('[STEP] 检测系统类型...')
+    const distro = await detectDistro()
+    pushLog(`[INFO] 系统: ${distro.name} (${distro.type})`)
+    pushLog(`[INFO] 版本: ${distro.version}`)
+    pushLog(`[INFO] 包管理器: ${distro.packageManager}`)
 
-    pushLog('[STEP] 安装依赖包...')
-    await executeShellCommand('apt-get install -y ca-certificates curl gnupg lsb-release', pushLog)
-    pushLog('[DONE] 依赖包安装完成')
+    if (distro.type === 'unknown') {
+      throw new Error('无法检测到系统类型，请手动安装 Docker')
+    }
 
-    pushLog('[STEP] 创建密钥目录...')
-    await executeShellCommand('mkdir -p /etc/apt/keyrings')
-    pushLog('[DONE] 密钥目录创建完成')
+    const mirrors: Record<DistroType, Record<string, { name: string; gpgUrl: string; repoUrl: string }>> = {
+      ubuntu: {
+        official: { name: '官方镜像', gpgUrl: 'https://download.docker.com/linux/ubuntu/gpg', repoUrl: 'https://download.docker.com/linux/ubuntu' },
+        aliyun: { name: '阿里云镜像', gpgUrl: 'https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg', repoUrl: 'https://mirrors.aliyun.com/docker-ce/linux/ubuntu' },
+        daocloud: { name: 'DaoCloud镜像', gpgUrl: 'https://download.docker.com/linux/ubuntu/gpg', repoUrl: 'https://mirrors.daocloud.io/docker-ce/linux/ubuntu' }
+      },
+      debian: {
+        official: { name: '官方镜像', gpgUrl: 'https://download.docker.com/linux/debian/gpg', repoUrl: 'https://download.docker.com/linux/debian' },
+        aliyun: { name: '阿里云镜像', gpgUrl: 'https://mirrors.aliyun.com/docker-ce/linux/debian/gpg', repoUrl: 'https://mirrors.aliyun.com/docker-ce/linux/debian' },
+        daocloud: { name: 'DaoCloud镜像', gpgUrl: 'https://download.docker.com/linux/debian/gpg', repoUrl: 'https://mirrors.daocloud.io/docker-ce/linux/debian' }
+      },
+      centos: {
+        official: { name: '官方镜像', gpgUrl: 'https://download.docker.com/linux/centos/gpg', repoUrl: 'https://download.docker.com/linux/centos' },
+        aliyun: { name: '阿里云镜像', gpgUrl: 'https://mirrors.aliyun.com/docker-ce/linux/centos/gpg', repoUrl: 'https://mirrors.aliyun.com/docker-ce/linux/centos' },
+        daocloud: { name: 'DaoCloud镜像', gpgUrl: 'https://download.docker.com/linux/centos/gpg', repoUrl: 'https://mirrors.daocloud.io/docker-ce/linux/centos' }
+      },
+      rhel: {
+        official: { name: '官方镜像', gpgUrl: 'https://download.docker.com/linux/rhel/gpg', repoUrl: 'https://download.docker.com/linux/rhel' },
+        aliyun: { name: '阿里云镜像', gpgUrl: 'https://mirrors.aliyun.com/docker-ce/linux/rhel/gpg', repoUrl: 'https://mirrors.aliyun.com/docker-ce/linux/rhel' },
+        daocloud: { name: 'DaoCloud镜像', gpgUrl: 'https://download.docker.com/linux/rhel/gpg', repoUrl: 'https://mirrors.daocloud.io/docker-ce/linux/rhel' }
+      },
+      fedora: {
+        official: { name: '官方镜像', gpgUrl: 'https://download.docker.com/linux/fedora/gpg', repoUrl: 'https://download.docker.com/linux/fedora' },
+        aliyun: { name: '阿里云镜像', gpgUrl: 'https://mirrors.aliyun.com/docker-ce/linux/fedora/gpg', repoUrl: 'https://mirrors.aliyun.com/docker-ce/linux/fedora' },
+        daocloud: { name: 'DaoCloud镜像', gpgUrl: 'https://download.docker.com/linux/fedora/gpg', repoUrl: 'https://mirrors.daocloud.io/docker-ce/linux/fedora' }
+      },
+      unknown: {
+        official: { name: '官方镜像', gpgUrl: 'https://download.docker.com/linux/ubuntu/gpg', repoUrl: 'https://download.docker.com/linux/ubuntu' },
+        aliyun: { name: '阿里云镜像', gpgUrl: 'https://download.docker.com/linux/ubuntu/gpg', repoUrl: 'https://download.docker.com/linux/ubuntu' },
+        daocloud: { name: 'DaoCloud镜像', gpgUrl: 'https://download.docker.com/linux/ubuntu/gpg', repoUrl: 'https://download.docker.com/linux/ubuntu' }
+      }
+    }
 
-    pushLog('[STEP] 下载 Docker GPG 密钥...')
-    const keyResult = await executeShellCommand(`curl -fsSL ${selectedMirror.gpgUrl}`)
-    pushLog(`[INFO] 密钥长度: ${keyResult.stdout.length} 字节`)
-    pushLog('[DONE] 密钥下载完成')
+    const selectedMirror = mirrors[distro.type][mirror] || mirrors[distro.type].official
+    pushLog(`[INFO] 使用镜像源: ${selectedMirror.name}`)
 
-    pushLog('[STEP] 安装 GPG 密钥...')
-    await executeShellCommand(`echo "${keyResult.stdout}" | gpg --dearmor -o /etc/apt/keyrings/docker.gpg`)
-    pushLog('[DONE] GPG 密钥安装完成')
-
-    pushLog('[STEP] 获取系统架构...')
-    const archResult = await executeShellCommand('dpkg --print-architecture')
-    pushLog(`[INFO] 架构: ${archResult.stdout.trim()}`)
-
-    pushLog('[STEP] 获取系统版本...')
-    const osResult = await executeShellCommand('lsb_release -si')
-    const osName = osResult.stdout.trim().toLowerCase() || 'ubuntu'
-    pushLog(`[INFO] 系统: ${osName}`)
-    
-    pushLog('[STEP] 获取系统代号...')
-    const codenameResult = await executeShellCommand('lsb_release -cs')
-    const codename = codenameResult.stdout.trim()
-    pushLog(`[INFO] 代号: ${codename}`)
-    
-    pushLog('[STEP] 添加 Docker 源...')
-    await executeShellCommand(`echo "deb [arch=${archResult.stdout.trim()} signed-by=/etc/apt/keyrings/docker.gpg] ${selectedMirror.repoUrl}/${osName} ${codename} stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null`)
-    pushLog(`[INFO] 使用镜像源: ${selectedMirror.repoUrl}`)
-    pushLog('[DONE] Docker 源添加完成')
-
-    pushLog('[STEP] 更新软件包列表...')
-    await executeShellCommand('apt-get update', pushLog)
-    pushLog('[DONE] 软件包列表更新完成')
-
-    pushLog('[STEP] 安装 Docker Engine...')
-    await executeShellCommand('apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin', pushLog)
-    pushLog('[DONE] Docker Engine 安装完成')
-
-    pushLog('[STEP] 启用 Docker 服务...')
-    await executeSudoCommand('systemctl', ['enable', 'docker'])
-    pushLog('[DONE] Docker 服务已启用')
+    if (distro.packageManager === 'apt') {
+      await installDockerForDebian(selectedMirror, distro, pushLog)
+    } else {
+      await installDockerForRHEL(selectedMirror, distro, pushLog)
+    }
 
     pushLog('[STEP] 启动 Docker 服务...')
     await executeSudoCommand('systemctl', ['start', 'docker'])
     pushLog('[DONE] Docker 服务已启动')
+
+    pushLog('[STEP] 启用 Docker 服务自启...')
+    await executeSudoCommand('systemctl', ['enable', 'docker'])
+    pushLog('[DONE] Docker 服务已启用自启')
+
+    pushLog('[STEP] 验证安装...')
+    try {
+      await executeShellCommand('docker run --rm hello-world', pushLog)
+      pushLog('[DONE] Docker 验证通过')
+    } catch {
+      pushLog('[WARN] Docker 验证失败，但服务可能已安装')
+    }
 
     pushLog('[STEP] 配置用户组...')
     const currentUserResult = await executeShellCommand('whoami')
@@ -254,6 +345,108 @@ export async function installDocker(mirror: 'official' | 'aliyun' | 'daocloud' =
       message: errorMessage,
       logs
     }
+  }
+}
+
+async function installDockerForDebian(mirror: { name: string; gpgUrl: string; repoUrl: string }, distro: DistroInfo, pushLog: (log: string) => void) {
+  pushLog('[STEP] 卸载旧版本 Docker...')
+  await executeShellCommand('apt-get remove -y docker.io docker-compose docker-compose-v2 docker-doc podman-docker containerd runc 2>/dev/null || true', pushLog)
+  pushLog('[DONE] 旧版本卸载完成')
+
+  pushLog('[STEP] 执行 apt-get update...')
+  await executeShellCommand('apt-get update', pushLog)
+  pushLog('[DONE] apt-get update 完成')
+
+  pushLog('[STEP] 安装依赖包...')
+  await executeShellCommand('apt-get install -y ca-certificates curl', pushLog)
+  pushLog('[DONE] 依赖包安装完成')
+
+  pushLog('[STEP] 创建密钥目录...')
+  await executeShellCommand('install -m 0755 -d /etc/apt/keyrings')
+  pushLog('[DONE] 密钥目录创建完成')
+
+  pushLog('[STEP] 下载 Docker GPG 密钥...')
+  await executeShellCommand(`curl -fsSL ${mirror.gpgUrl} -o /etc/apt/keyrings/docker.asc`, pushLog)
+  pushLog('[DONE] GPG 密钥下载完成')
+
+  pushLog('[STEP] 设置密钥文件权限...')
+  await executeShellCommand('chmod a+r /etc/apt/keyrings/docker.asc')
+  pushLog('[DONE] 密钥文件权限设置完成')
+
+  pushLog('[STEP] 获取系统架构...')
+  const archResult = await executeShellCommand('dpkg --print-architecture')
+  const arch = archResult.stdout.trim()
+  pushLog(`[INFO] 架构: ${arch}`)
+
+  let codename = distro.codename
+  if (!codename) {
+    pushLog('[STEP] 获取系统代号...')
+    const codenameResult = await executeShellCommand('. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}"')
+    codename = codenameResult.stdout.trim() || (distro.type === 'ubuntu' ? 'jammy' : 'bookworm')
+  }
+  pushLog(`[INFO] 系统代号: ${codename}`)
+  
+  pushLog('[STEP] 添加 Docker 源...')
+  const sourcesContent = `Types: deb
+URIs: ${mirror.repoUrl}
+Suites: ${codename}
+Components: stable
+Architectures: ${arch}
+Signed-By: /etc/apt/keyrings/docker.asc
+`
+  await executeShellCommand(`echo "${sourcesContent.replace(/"/g, '\\"')}" | tee /etc/apt/sources.list.d/docker.sources > /dev/null`)
+  pushLog(`[INFO] 使用镜像源: ${mirror.repoUrl}`)
+  pushLog('[DONE] Docker 源添加完成')
+
+  pushLog('[STEP] 更新软件包列表...')
+  await executeShellCommand('apt-get update', pushLog)
+  pushLog('[DONE] 软件包列表更新完成')
+
+  pushLog('[STEP] 安装 Docker Engine...')
+  try {
+    await executeShellCommand('apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin', pushLog)
+    pushLog('[DONE] Docker Engine 安装完成')
+  } catch {
+    pushLog('[WARN] 官方源安装失败，尝试使用系统自带包...')
+    try {
+      await executeShellCommand('apt-get install -y docker.io', pushLog)
+      pushLog('[DONE] Docker (系统包) 安装完成')
+      
+      pushLog('[STEP] 安装 Docker Compose V2...')
+      await executeShellCommand('apt-get install -y docker-compose-v2', pushLog)
+      pushLog('[DONE] Docker Compose V2 安装完成')
+    } catch (fallbackError: any) {
+      const fallbackErrorMessage = fallbackError.message || (fallbackError.stderr || fallbackError.stdout || 'Unknown error').toString()
+      pushLog(`[ERROR] 系统包安装也失败: ${fallbackErrorMessage}`)
+      throw new Error(`Docker 安装失败，请检查网络连接或手动安装。错误: ${fallbackErrorMessage}`)
+    }
+  }
+}
+
+async function installDockerForRHEL(mirror: { name: string; gpgUrl: string; repoUrl: string }, distro: DistroInfo, pushLog: (log: string) => void) {
+  const pkgMgr = distro.packageManager === 'dnf' ? 'dnf' : 'yum'
+
+  pushLog('[STEP] 卸载旧版本 Docker...')
+  await executeShellCommand(`${pkgMgr} remove -y docker docker-client docker-client-latest docker-common docker-latest docker-latest-logrotate docker-logrotate docker-engine podman-docker containerd runc 2>/dev/null || true`, pushLog)
+  pushLog('[DONE] 旧版本卸载完成')
+
+  pushLog('[STEP] 安装依赖包...')
+  await executeShellCommand(`${pkgMgr} install -y yum-utils device-mapper-persistent-data lvm2`, pushLog)
+  pushLog('[DONE] 依赖包安装完成')
+
+  pushLog('[STEP] 添加 Docker 源...')
+  await executeShellCommand(`${pkgMgr} config-manager --add-repo ${mirror.repoUrl}/docker-ce.repo`, pushLog)
+  pushLog(`[INFO] 使用镜像源: ${mirror.repoUrl}`)
+  pushLog('[DONE] Docker 源添加完成')
+
+  pushLog('[STEP] 安装 Docker Engine...')
+  try {
+    await executeShellCommand(`${pkgMgr} install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin`, pushLog)
+    pushLog('[DONE] Docker Engine 安装完成')
+  } catch (error: any) {
+    const errorMessage = error.message || (error.stderr || error.stdout || 'Unknown error').toString()
+    pushLog(`[ERROR] 安装失败: ${errorMessage}`)
+    throw new Error(`Docker 安装失败，请检查网络连接或手动安装。错误: ${errorMessage}`)
   }
 }
 

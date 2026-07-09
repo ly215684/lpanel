@@ -1,7 +1,10 @@
 import { FastifyInstance } from 'fastify'
+import { PrismaClient } from '@prisma/client'
 import { login, refreshToken, logout, getUserById, updateUser, changePassword } from '../services/auth'
 import { authenticate } from '../middleware/auth'
 import { LoginRequest, RefreshTokenRequest } from '../types'
+
+const prisma = new PrismaClient()
 
 export async function authRoutes(fastify: FastifyInstance) {
   fastify.post<{ Body: LoginRequest }>('/login', async (request, reply) => {
@@ -9,13 +12,23 @@ export async function authRoutes(fastify: FastifyInstance) {
       const { username, password } = request.body
       const ipAddress = request.ip || ''
       
-      const { user, refreshToken: refreshTokenValue } = await login(username, password, ipAddress)
+      const { user, refreshToken: refreshTokenValue, sessionId } = await login(username, password, ipAddress)
       
       const accessToken = await reply.jwtSign({
         id: user.id,
         username: user.username,
         email: user.email,
         role: user.role
+      })
+      
+      const accessTokenExpires = new Date(Date.now() + 60 * 60 * 1000)
+      
+      await prisma.session.update({
+        where: { id: sessionId },
+        data: {
+          access_token: accessToken,
+          access_token_expires: accessTokenExpires
+        }
       })
       
       reply.send({
@@ -32,13 +45,23 @@ export async function authRoutes(fastify: FastifyInstance) {
     try {
       const { refresh_token } = request.body
       
-      const { user, refreshToken: refreshTokenValue } = await refreshToken(refresh_token)
+      const { user, refreshToken: refreshTokenValue, sessionId } = await refreshToken(refresh_token)
       
       const accessToken = await reply.jwtSign({
         id: user.id,
         username: user.username,
         email: user.email,
         role: user.role
+      })
+      
+      const accessTokenExpires = new Date(Date.now() + 60 * 60 * 1000)
+      
+      await prisma.session.update({
+        where: { id: sessionId },
+        data: {
+          access_token: accessToken,
+          access_token_expires: accessTokenExpires
+        }
       })
       
       reply.send({
