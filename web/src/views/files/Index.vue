@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { listFilesApi, createDirectoryApi, deleteFileApi, readFileApi, writeFileApi, changePermissionsApi, searchFilesApi, downloadFileApi, uploadFileApi, renameFileApi, compressFileApi, compressFilesApi, extractFileApi } from '@/api'
 import { ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElButton, ElPagination } from 'element-plus'
 import { Search, Refresh, Upload, FolderAdd, Star, Share, Setting, Folder, Document, Delete, Grid, Lock, Edit, Download, ArrowRight, ArrowDown, FolderOpened, Picture, CopyDocument, Scissor, InfoFilled } from '@element-plus/icons-vue'
@@ -45,6 +45,29 @@ const copiedFiles = ref<{ items: FileItem[]; action: 'copy' | 'cut' } | null>(nu
 const contextMenuVisible = ref(false)
 const contextMenuPosition = ref({ x: 0, y: 0 })
 const contextMenuTarget = ref<FileItem | null>(null)
+const contextMenuRef = ref<HTMLElement | null>(null)
+
+function showContextMenu(x: number, y: number, target: FileItem | null) {
+  contextMenuTarget.value = target
+  contextMenuPosition.value = { x, y }
+  contextMenuVisible.value = true
+  nextTick(() => {
+    const menu = contextMenuRef.value
+    if (!menu) return
+    const rect = menu.getBoundingClientRect()
+    const viewportWidth = window.innerWidth
+    const viewportHeight = window.innerHeight
+    let adjustedX = x
+    let adjustedY = y
+    if (x + rect.width > viewportWidth - 8) {
+      adjustedX = Math.max(8, viewportWidth - rect.width - 8)
+    }
+    if (y + rect.height > viewportHeight - 8) {
+      adjustedY = Math.max(8, viewportHeight - rect.height - 8)
+    }
+    contextMenuPosition.value = { x: adjustedX, y: adjustedY }
+  })
+}
 
 const dragOverRow = ref<FileItem | null>(null)
 
@@ -595,16 +618,12 @@ function handleContextMenu(e: MouseEvent, row: FileItem, _column: any) {
     selectedFiles.value = [row]
   }
   
-  contextMenuTarget.value = row
-  contextMenuPosition.value = { x: e.clientX, y: e.clientY }
-  contextMenuVisible.value = true
+  showContextMenu(e.clientX, e.clientY, row)
 }
 
 function handleTableContextMenu(e: MouseEvent) {
   e.preventDefault()
-  contextMenuTarget.value = null
-  contextMenuPosition.value = { x: e.clientX, y: e.clientY }
-  contextMenuVisible.value = true
+  showContextMenu(e.clientX, e.clientY, null)
 }
 
 function closeContextMenu() {
@@ -618,6 +637,12 @@ function handleSelectionChange(selection: FileItem[]) {
 function handleRowClick(row: FileItem) {
   if (row.type === 'directory') {
     navigate(row.path)
+  }
+}
+
+function handleRowDblClick(row: FileItem) {
+  if (row.type === 'directory') {
+    navigate(row.path)
   } else if (isCompressedFile(row)) {
     handleExtract(row)
   } else {
@@ -628,9 +653,7 @@ function handleRowClick(row: FileItem) {
 function handleActionClick(e: Event, row: FileItem) {
   e.stopPropagation()
   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  contextMenuTarget.value = row
-  contextMenuPosition.value = { x: rect.left, y: rect.bottom + 4 }
-  contextMenuVisible.value = true
+  showContextMenu(rect.left, rect.bottom + 4, row)
 }
 
 function handleClickOutside(e: MouseEvent) {
@@ -747,11 +770,12 @@ onUnmounted(() => {
       @dragover="onDragOver"
       @drop="onDrop"
     >
-      <el-table 
-        :data="files" 
+      <el-table
+        :data="files"
         class="files-table"
         @selection-change="handleSelectionChange"
         @row-click="handleRowClick"
+        @row-dblclick="handleRowDblClick"
         @row-contextmenu="handleContextMenu"
         @contextmenu="handleTableContextMenu"
 
@@ -886,8 +910,9 @@ onUnmounted(() => {
     </ElDialog>
 
     <Teleport to="body">
-      <div 
-        v-if="contextMenuVisible" 
+      <div
+        v-if="contextMenuVisible"
+        ref="contextMenuRef"
         class="context-menu"
         :style="{ left: contextMenuPosition.x + 'px', top: contextMenuPosition.y + 'px' }"
         @click.stop

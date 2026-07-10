@@ -124,10 +124,10 @@ export async function readComposeFile(path: string): Promise<string> {
   return result.stdout
 }
 
-export async function composeUp(path: string) {
+export async function composeUp(path: string, onOutput?: (output: string) => void) {
   const dockerPath = getDockerPath()
   const dir = path.substring(0, path.lastIndexOf('/'))
-  await executeSudoCommand(dockerPath, ['compose', '-f', path, '-p', 'lpanel-compose', 'up', '-d'], { cwd: dir })
+  await executeSudoCommand(dockerPath, ['compose', '-f', path, '-p', 'lpanel-compose', 'up', '-d'], { cwd: dir }, onOutput)
 }
 
 export async function composeDown(path: string) {

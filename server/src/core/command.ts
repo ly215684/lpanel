@@ -1,4 +1,4 @@
-import { exec, execFile, ExecFileOptions } from 'child_process'
+import { exec, execFile, ExecFileOptions, spawn } from 'child_process'
 import { logger } from './logger'
 
 const ALLOWED_COMMANDS: string[] = [
@@ -96,13 +96,13 @@ export async function executeCommand(command: string, args: string[] = [], optio
   })
 }
 
-export async function executeSudoCommand(command: string, args: string[] = [], options: ExecFileOptions = {}): Promise<{ stdout: string; stderr: string }> {
+export async function executeSudoCommand(command: string, args: string[] = [], options: ExecFileOptions = {}, onOutput?: (output: string) => void): Promise<{ stdout: string; stderr: string }> {
   const sanitizedCommand = sanitizeCommand(command)
   const sanitizedArgs = sanitizeArgs(args)
 
-  const commandAllowed = SUDO_COMMANDS.includes(sanitizedCommand) || 
+  const commandAllowed = SUDO_COMMANDS.includes(sanitizedCommand) ||
     SUDO_COMMANDS.some(allowed => allowed.endsWith(`/${sanitizedCommand}`))
-  
+
   if (!commandAllowed) {
     logger.warn(`Sudo command not allowed: ${command}`)
     throw new Error('Sudo command not allowed')
@@ -121,15 +121,35 @@ export async function executeSudoCommand(command: string, args: string[] = [], o
   logger.info(`Executing sudo command: sudo -n ${fullCommand} ${sanitizedArgs.join(' ')}`)
 
   return new Promise((resolve, reject) => {
-    execFile('/usr/bin/sudo', sudoArgs, options, (error, stdout, stderr) => {
-      const stdoutStr = typeof stdout === 'string' ? stdout : stdout.toString()
-      const stderrStr = typeof stderr === 'string' ? stderr : stderr.toString()
-      if (error) {
-        logger.error(`Sudo command execution failed: ${error.message}`)
-        reject({ stdout: stdoutStr, stderr: stderrStr, error })
+    const child = spawn('/usr/bin/sudo', sudoArgs, { ...options, stdio: ['ignore', 'pipe', 'pipe'] })
+
+    let stdout = ''
+    let stderr = ''
+
+    child.stdout?.on('data', (data) => {
+      const str = typeof data === 'string' ? data : data.toString()
+      stdout += str
+      onOutput?.(str)
+    })
+
+    child.stderr?.on('data', (data) => {
+      const str = typeof data === 'string' ? data : data.toString()
+      stderr += str
+      onOutput?.(str)
+    })
+
+    child.on('error', (error) => {
+      logger.error(`Sudo command execution failed: ${error.message}`)
+      reject({ stdout, stderr, error })
+    })
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        logger.debug(`Sudo command executed successfully: ${stdout}`)
+        resolve({ stdout, stderr })
       } else {
-        logger.debug(`Sudo command executed successfully: ${stdoutStr}`)
-        resolve({ stdout: stdoutStr, stderr: stderrStr })
+        logger.error(`Sudo command exited with code ${code}`)
+        reject({ stdout, stderr, error: new Error(`Command exited with code ${code}`) })
       }
     })
   })

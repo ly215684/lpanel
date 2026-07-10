@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { getImagesApi, pullImageApi, removeImageApi, getContainersApi, createContainerApi, startContainerApi, stopContainerApi, removeContainerApi, getContainerLogsApi, composeUpApi, composeDownApi, composeLogsApi, listDirectoryApi, getComposeServicesApi, composeRestartApi, composeDownWithVolumesApi, getDockerStatusApi, uploadFileApi } from '@/api'
+import { getImagesApi, pullImageApi, removeImageApi, getContainersApi, createContainerApi, startContainerApi, stopContainerApi, removeContainerApi, getContainerLogsApi, composeUpStreamApi, composeDownApi, composeLogsApi, listDirectoryApi, getComposeServicesApi, composeRestartApi, composeDownWithVolumesApi, getDockerStatusApi, uploadFileApi } from '@/api'
 import { ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElTabs, ElTabPane, ElSelect, ElOption } from 'element-plus'
 
 interface Image {
@@ -67,6 +67,12 @@ const browserCurrentPath = ref('/')
 const browserItems = ref<Array<{ name: string; type: 'file' | 'directory'; path: string }>>([])
 const browserPathHistory = ref<string[]>([])
 const browserLoading = ref(false)
+
+const showDeployLogDialog = ref(false)
+const deployLogs = ref('')
+const deploying = ref(false)
+const deploySuccess = ref(false)
+const deployLogContent = ref<HTMLElement | null>(null)
 
 const router = useRouter()
 
@@ -359,6 +365,41 @@ function getErrorDetail(error: any): string | undefined {
   return error.response?.data?.detail
 }
 
+async function deployWithLogs(data: { path?: string; content?: string }): Promise<{ success: boolean; message: string }> {
+  showDeployLogDialog.value = true
+  deploying.value = true
+  deploySuccess.value = false
+  deployLogs.value = ''
+  await nextTick()
+
+  const appendLog = (log: string) => {
+    deployLogs.value += log
+    nextTick(() => {
+      if (deployLogContent.value) {
+        deployLogContent.value.scrollTop = deployLogContent.value.scrollHeight
+      }
+    })
+  }
+
+  try {
+    const result = await composeUpStreamApi(data, appendLog)
+    deploySuccess.value = result.success
+    if (!result.success && result.message) {
+      appendLog(`\n[错误] ${result.message}\n`)
+    } else if (result.success && result.message) {
+      appendLog(`\n[完成] ${result.message}\n`)
+    }
+    return result
+  } catch (error: any) {
+    deploySuccess.value = false
+    const message = getErrorMessage(error)
+    appendLog(`\n[错误] ${message}\n`)
+    return { success: false, message }
+  } finally {
+    deploying.value = false
+  }
+}
+
 async function loadComposeServices(path: string) {
   try {
     composeServices.value = await getComposeServicesApi(path)
@@ -437,20 +478,14 @@ async function loadComposeProjects() {
 async function deployFromTemplate(template: ComposeTemplate) {
   selectedTemplate.value = template
   composeContent.value = template.compose
-  
-  try {
-    await composeUpApi({ content: template.compose })
+
+  const result = await deployWithLogs({ content: template.compose })
+  if (result.success) {
     ElMessage.success(`${template.name} 部署成功`)
     loadComposeProjects()
     loadContainers()
-  } catch (error: any) {
-    const message = getErrorMessage(error)
-    const detail = getErrorDetail(error)
-    if (detail) {
-      ElMessage.error(`${message}\n详细信息: ${detail}`)
-    } else {
-      ElMessage.error(message)
-    }
+  } else {
+    ElMessage.error(result.message || '部署失败')
   }
 }
 
@@ -459,20 +494,14 @@ async function confirmDeploy() {
     ElMessage.warning('请输入 Compose 配置内容')
     return
   }
-  try {
-    await composeUpApi({ content: composeContent.value })
+  const result = await deployWithLogs({ content: composeContent.value })
+  if (result.success) {
     ElMessage.success('部署成功')
     showDeployDialog.value = false
     loadComposeProjects()
     loadContainers()
-  } catch (error: any) {
-    const message = getErrorMessage(error)
-    const detail = getErrorDetail(error)
-    if (detail) {
-      ElMessage.error(`${message}\n详细信息: ${detail}`)
-    } else {
-      ElMessage.error(message)
-    }
+  } else {
+    ElMessage.error(result.message || '部署失败')
   }
 }
 
@@ -572,21 +601,20 @@ async function confirmFileDeploy() {
     deployLoading.value = true
     try {
       const uploadPath = '/tmp'
-      const result = await uploadFileApi(selectedDeployFile.value, uploadPath)
-      const filePath = (result as any).path || `${uploadPath}/${selectedDeployFile.value.name}`
-      await composeUpApi({ path: filePath })
-      ElMessage.success('部署成功')
-      showFileDeployDialog.value = false
-      loadComposeProjects()
-      loadContainers()
+      const uploadResult = await uploadFileApi(selectedDeployFile.value, uploadPath)
+      const filePath = (uploadResult as any).path || `${uploadPath}/${selectedDeployFile.value.name}`
+      const result = await deployWithLogs({ path: filePath })
+      if (result.success) {
+        ElMessage.success('部署成功')
+        showFileDeployDialog.value = false
+        loadComposeProjects()
+        loadContainers()
+      } else {
+        ElMessage.error(result.message || '部署失败')
+      }
     } catch (error: any) {
       const message = getErrorMessage(error)
-      const detail = getErrorDetail(error)
-      if (detail) {
-        ElMessage.error(`${message}\n详细信息: ${detail}`)
-      } else {
-        ElMessage.error(message)
-      }
+      ElMessage.error(message)
     } finally {
       deployLoading.value = false
     }
@@ -597,19 +625,18 @@ async function confirmFileDeploy() {
     }
     deployLoading.value = true
     try {
-      await composeUpApi({ path: deployFilePath.value.trim() })
-      ElMessage.success('部署成功')
-      showFileDeployDialog.value = false
-      loadComposeProjects()
-      loadContainers()
+      const result = await deployWithLogs({ path: deployFilePath.value.trim() })
+      if (result.success) {
+        ElMessage.success('部署成功')
+        showFileDeployDialog.value = false
+        loadComposeProjects()
+        loadContainers()
+      } else {
+        ElMessage.error(result.message || '部署失败')
+      }
     } catch (error: any) {
       const message = getErrorMessage(error)
-      const detail = getErrorDetail(error)
-      if (detail) {
-        ElMessage.error(`${message}\n详细信息: ${detail}`)
-      } else {
-        ElMessage.error(message)
-      }
+      ElMessage.error(message)
     } finally {
       deployLoading.value = false
     }
@@ -738,46 +765,34 @@ async function createProject() {
     ElMessage.warning('请输入项目名称')
     return
   }
-  
+
   const validServices = composeForm.value.services.filter(s => s.name && s.image)
   if (validServices.length === 0) {
     ElMessage.warning('请至少配置一个服务')
     return
   }
-  
+
   const yaml = generateComposeYaml()
-  
-  try {
-    await composeUpApi({ content: yaml })
+
+  const result = await deployWithLogs({ content: yaml })
+  if (result.success) {
     ElMessage.success('项目创建成功')
     showCreateProjectDialog.value = false
     loadComposeProjects()
     loadContainers()
-  } catch (error: any) {
-    const message = getErrorMessage(error)
-    const detail = getErrorDetail(error)
-    if (detail) {
-      ElMessage.error(`${message}\n详细信息: ${detail}`)
-    } else {
-      ElMessage.error(message)
-    }
+  } else {
+    ElMessage.error(result.message || '项目创建失败')
   }
 }
 
 async function startProject(project: ComposeProject) {
-  try {
-    await composeUpApi({ path: project.path })
+  const result = await deployWithLogs({ path: project.path })
+  if (result.success) {
     ElMessage.success(`项目 ${project.name} 启动成功`)
     await loadComposeProjects()
     loadContainers()
-  } catch (error: any) {
-    const message = getErrorMessage(error)
-    const detail = getErrorDetail(error)
-    if (detail) {
-      ElMessage.error(`${message}\n详细信息: ${detail}`)
-    } else {
-      ElMessage.error(message)
-    }
+  } else {
+    ElMessage.error(result.message || `项目 ${project.name} 启动失败`)
   }
 }
 
@@ -1361,6 +1376,29 @@ watch(activeTab, (newVal) => {
       <template #footer>
         <button class="el-button" @click="showCreateProjectDialog = false">取消</button>
         <button class="el-button el-button--primary" @click="createProject">创建</button>
+      </template>
+    </ElDialog>
+
+    <ElDialog v-model="showDeployLogDialog" title="部署日志" width="800px" :close-on-click-modal="false" :close-on-press-escape="!deploying" :show-close="!deploying">
+      <div class="deploy-log-container">
+        <div ref="deployLogContent" class="deploy-log-content">
+          <pre>{{ deployLogs || '等待部署日志输出...' }}</pre>
+        </div>
+        <div v-if="deploying" class="deploy-status deploying">
+          <span class="status-dot"></span>
+          部署中，请稍候...
+        </div>
+        <div v-else-if="deploySuccess" class="deploy-status success">
+          <span class="status-dot"></span>
+          部署完成
+        </div>
+        <div v-else class="deploy-status failed">
+          <span class="status-dot"></span>
+          部署失败
+        </div>
+      </div>
+      <template #footer>
+        <button class="el-button" :disabled="deploying" @click="showDeployLogDialog = false">关闭</button>
       </template>
     </ElDialog>
   </div>
@@ -2354,5 +2392,98 @@ th {
   font-size: 12px;
   color: #909399;
   margin: 8px 0 0 0;
+}
+
+.deploy-log-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.deploy-log-content {
+  background: #1e1e1e;
+  border-radius: 8px;
+  padding: 16px;
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid #333;
+}
+
+.deploy-log-content pre {
+  margin: 0;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #d4d4d4;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.deploy-log-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.deploy-log-content::-webkit-scrollbar-track {
+  background: #2d2d2d;
+  border-radius: 4px;
+}
+
+.deploy-log-content::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 4px;
+}
+
+.deploy-log-content::-webkit-scrollbar-thumb:hover {
+  background: #777;
+}
+
+.deploy-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.deploy-status .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.deploy-status.deploying {
+  background: #ecf5ff;
+  color: #409eff;
+}
+
+.deploy-status.deploying .status-dot {
+  background: #409eff;
+  animation: pulse 1.2s infinite;
+}
+
+.deploy-status.success {
+  background: #f0f9eb;
+  color: #67c23a;
+}
+
+.deploy-status.success .status-dot {
+  background: #67c23a;
+}
+
+.deploy-status.failed {
+  background: #fef0f0;
+  color: #f56c6c;
+}
+
+.deploy-status.failed .status-dot {
+  background: #f56c6c;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 </style>

@@ -344,6 +344,10 @@ export async function composeUpApi(data: { path?: string; content?: string }) {
   return request.post('/containers/compose/up', data)
 }
 
+export async function composeUpStreamApi(data: { path?: string; content?: string }, onLog?: (log: string) => void): Promise<{ success: boolean; message: string }> {
+  return makeSseRequest('/containers/compose/up', data as unknown as Record<string, unknown>, onLog)
+}
+
 export async function composeDownApi(path: string) {
   return request.post('/containers/compose/down', { path })
 }

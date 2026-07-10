@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { getTasksApi, createTaskApi, updateTaskApi, deleteTaskApi, runTaskApi, getTaskExecutionsApi, listFilesApi } from '@/api'
-import { ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElSelect, ElOption, ElSwitch } from 'element-plus'
+import { ElMessage, ElDialog, ElForm, ElFormItem, ElInput, ElInputNumber, ElSelect, ElOption, ElSwitch } from 'element-plus'
 
 interface Task {
   id: string
@@ -42,6 +42,75 @@ const form = ref({
   cron_expression: '',
   command: ''
 })
+
+const cronMode = ref<'minute' | 'hour' | 'day' | 'week' | 'month' | 'nminute' | 'nhour' | 'custom'>('day')
+const cronMinute = ref(0)
+const cronHour = ref(0)
+const cronDay = ref(1)
+const cronWeek = ref(1)
+const cronNMinute = ref(5)
+const cronNHour = ref(1)
+
+function generateCron() {
+  switch (cronMode.value) {
+    case 'minute':
+      return '* * * * *'
+    case 'hour':
+      return `${cronMinute.value} * * * *`
+    case 'day':
+      return `${cronMinute.value} ${cronHour.value} * * *`
+    case 'week':
+      return `${cronMinute.value} ${cronHour.value} * * ${cronWeek.value}`
+    case 'month':
+      return `${cronMinute.value} ${cronHour.value} ${cronDay.value} * *`
+    case 'nminute':
+      return `*/${cronNMinute.value} * * * *`
+    case 'nhour':
+      return `0 */${cronNHour.value} * * *`
+    case 'custom':
+      return form.value.cron_expression
+    default:
+      return '* * * * *'
+  }
+}
+
+function parseCron(cron: string) {
+  const parts = cron.split(' ')
+  if (parts.length !== 5) {
+    cronMode.value = 'custom'
+    return
+  }
+  const [min, hour, day, mon, week] = parts
+  
+  if (min === '*' && hour === '*' && day === '*' && mon === '*' && week === '*') {
+    cronMode.value = 'minute'
+  } else if (hour === '*' && day === '*' && mon === '*' && week === '*' && !isNaN(Number(min))) {
+    cronMode.value = 'hour'
+    cronMinute.value = Number(min)
+  } else if (day === '*' && mon === '*' && week === '*' && !isNaN(Number(min)) && !isNaN(Number(hour))) {
+    cronMode.value = 'day'
+    cronMinute.value = Number(min)
+    cronHour.value = Number(hour)
+  } else if (day === '*' && mon === '*' && min !== '*' && hour !== '*' && !isNaN(Number(week))) {
+    cronMode.value = 'week'
+    cronMinute.value = Number(min)
+    cronHour.value = Number(hour)
+    cronWeek.value = Number(week)
+  } else if (mon === '*' && week === '*' && !isNaN(Number(min)) && !isNaN(Number(hour)) && !isNaN(Number(day))) {
+    cronMode.value = 'month'
+    cronMinute.value = Number(min)
+    cronHour.value = Number(hour)
+    cronDay.value = Number(day)
+  } else if (min.startsWith('*/') && hour === '*' && day === '*' && mon === '*' && week === '*') {
+    cronMode.value = 'nminute'
+    cronNMinute.value = Number(min.replace('*/', ''))
+  } else if (min === '0' && hour.startsWith('*/') && day === '*' && mon === '*' && week === '*') {
+    cronMode.value = 'nhour'
+    cronNHour.value = Number(hour.replace('*/', ''))
+  } else {
+    cronMode.value = 'custom'
+  }
+}
 
 const showFileBrowser = ref(false)
 const browserCurrentPath = ref('/')
@@ -115,14 +184,19 @@ async function loadTasks() {
 }
 
 async function createTask() {
-  if (!form.value.name || !form.value.cron_expression) {
-    ElMessage.warning('请填写完整信息')
+  if (!form.value.name) {
+    ElMessage.warning('请填写任务名称')
     return
   }
+  if (cronMode.value === 'custom' && !form.value.cron_expression) {
+    ElMessage.warning('请填写Cron表达式')
+    return
+  }
+  const cronExpr = generateCron()
   const data = {
     name: form.value.name,
     type: form.value.type,
-    cron_expression: form.value.cron_expression,
+    cron_expression: cronExpr,
     command: form.value.command || undefined
   }
   try {
@@ -130,6 +204,9 @@ async function createTask() {
     ElMessage.success('任务创建成功')
     showCreateDialog.value = false
     form.value = { name: '', type: 'backup', cron_expression: '', command: '' }
+    cronMode.value = 'day'
+    cronMinute.value = 0
+    cronHour.value = 0
     loadTasks()
   } catch {
     ElMessage.error('任务创建失败')
@@ -144,19 +221,25 @@ async function openEdit(task: Task) {
     cron_expression: task.cron_expression,
     command: task.command || ''
   }
+  parseCron(task.cron_expression)
   showEditDialog.value = true
 }
 
 async function saveEdit() {
   if (!selectedTask.value) return
-  if (!form.value.name || !form.value.cron_expression) {
-    ElMessage.warning('请填写完整信息')
+  if (!form.value.name) {
+    ElMessage.warning('请填写任务名称')
     return
   }
+  if (cronMode.value === 'custom' && !form.value.cron_expression) {
+    ElMessage.warning('请填写Cron表达式')
+    return
+  }
+  const cronExpr = generateCron()
   const data = {
     name: form.value.name,
     type: form.value.type,
-    cron_expression: form.value.cron_expression,
+    cron_expression: cronExpr,
     command: form.value.command || undefined,
     status: selectedTask.value.status
   }
@@ -300,9 +383,77 @@ onMounted(() => {
             <ElOption label="脚本任务" value="script" />
           </ElSelect>
         </ElFormItem>
-        <ElFormItem label="Cron表达式">
-          <ElInput v-model="form.cron_expression" placeholder="如: 0 0 * * *" />
-          <div class="cron-hint">格式: 分 时 日 月 周</div>
+        <ElFormItem label="执行周期">
+          <div class="cron-selector">
+            <div class="cron-mode-tabs">
+              <div :class="['cron-mode-tab', { active: cronMode === 'minute' }]" @click="cronMode = 'minute'">每分钟</div>
+              <div :class="['cron-mode-tab', { active: cronMode === 'nminute' }]" @click="cronMode = 'nminute'">每N分钟</div>
+              <div :class="['cron-mode-tab', { active: cronMode === 'hour' }]" @click="cronMode = 'hour'">每小时</div>
+              <div :class="['cron-mode-tab', { active: cronMode === 'nhour' }]" @click="cronMode = 'nhour'">每N小时</div>
+              <div :class="['cron-mode-tab', { active: cronMode === 'day' }]" @click="cronMode = 'day'">每天</div>
+              <div :class="['cron-mode-tab', { active: cronMode === 'week' }]" @click="cronMode = 'week'">每周</div>
+              <div :class="['cron-mode-tab', { active: cronMode === 'month' }]" @click="cronMode = 'month'">每月</div>
+              <div :class="['cron-mode-tab', { active: cronMode === 'custom' }]" @click="cronMode = 'custom'">自定义</div>
+            </div>
+            <div class="cron-value-panel">
+              <div v-if="cronMode === 'minute'" class="cron-desc">每分钟执行一次</div>
+              <div v-if="cronMode === 'nminute'" class="cron-input-row">
+                每
+                <ElInputNumber v-model="cronNMinute" :min="1" :max="59" size="small" style="width: 80px" />
+                分钟执行一次
+              </div>
+              <div v-if="cronMode === 'hour'" class="cron-input-row">
+                每小时第
+                <ElInputNumber v-model="cronMinute" :min="0" :max="59" size="small" style="width: 80px" />
+                分执行
+              </div>
+              <div v-if="cronMode === 'nhour'" class="cron-input-row">
+                每
+                <ElInputNumber v-model="cronNHour" :min="1" :max="23" size="small" style="width: 80px" />
+                小时执行一次
+              </div>
+              <div v-if="cronMode === 'day'" class="cron-input-row">
+                每天
+                <ElInputNumber v-model="cronHour" :min="0" :max="23" size="small" style="width: 80px" />
+                时
+                <ElInputNumber v-model="cronMinute" :min="0" :max="59" size="small" style="width: 80px" />
+                分执行
+              </div>
+              <div v-if="cronMode === 'week'" class="cron-input-row">
+                每周
+                <ElSelect v-model="cronWeek" size="small" style="width: 120px">
+                  <ElOption label="周日" :value="0" />
+                  <ElOption label="周一" :value="1" />
+                  <ElOption label="周二" :value="2" />
+                  <ElOption label="周三" :value="3" />
+                  <ElOption label="周四" :value="4" />
+                  <ElOption label="周五" :value="5" />
+                  <ElOption label="周六" :value="6" />
+                </ElSelect>
+                <ElInputNumber v-model="cronHour" :min="0" :max="23" size="small" style="width: 80px" />
+                时
+                <ElInputNumber v-model="cronMinute" :min="0" :max="59" size="small" style="width: 80px" />
+                分执行
+              </div>
+              <div v-if="cronMode === 'month'" class="cron-input-row">
+                每月第
+                <ElInputNumber v-model="cronDay" :min="1" :max="31" size="small" style="width: 80px" />
+                日
+                <ElInputNumber v-model="cronHour" :min="0" :max="23" size="small" style="width: 80px" />
+                时
+                <ElInputNumber v-model="cronMinute" :min="0" :max="59" size="small" style="width: 80px" />
+                分执行
+              </div>
+              <div v-if="cronMode === 'custom'" class="cron-custom-row">
+                <ElInput v-model="form.cron_expression" placeholder="请输入Cron表达式" size="small" />
+                <div class="cron-hint">格式: 分 时 日 月 周</div>
+              </div>
+            </div>
+            <div class="cron-preview">
+              <span class="cron-preview-label">Cron表达式：</span>
+              <span class="cron-preview-value">{{ generateCron() }}</span>
+            </div>
+          </div>
         </ElFormItem>
         <ElFormItem :label="form.type === 'script' ? '脚本路径' : '执行命令'">
           <div v-if="form.type === 'script'" class="script-input-group">
@@ -341,8 +492,77 @@ onMounted(() => {
             <ElOption label="脚本任务" value="script" />
           </ElSelect>
         </ElFormItem>
-        <ElFormItem label="Cron表达式">
-          <ElInput v-model="form.cron_expression" placeholder="如: 0 0 * * *" />
+        <ElFormItem label="执行周期">
+          <div class="cron-selector">
+            <div class="cron-mode-tabs">
+              <div :class="['cron-mode-tab', { active: cronMode === 'minute' }]" @click="cronMode = 'minute'">每分钟</div>
+              <div :class="['cron-mode-tab', { active: cronMode === 'nminute' }]" @click="cronMode = 'nminute'">每N分钟</div>
+              <div :class="['cron-mode-tab', { active: cronMode === 'hour' }]" @click="cronMode = 'hour'">每小时</div>
+              <div :class="['cron-mode-tab', { active: cronMode === 'nhour' }]" @click="cronMode = 'nhour'">每N小时</div>
+              <div :class="['cron-mode-tab', { active: cronMode === 'day' }]" @click="cronMode = 'day'">每天</div>
+              <div :class="['cron-mode-tab', { active: cronMode === 'week' }]" @click="cronMode = 'week'">每周</div>
+              <div :class="['cron-mode-tab', { active: cronMode === 'month' }]" @click="cronMode = 'month'">每月</div>
+              <div :class="['cron-mode-tab', { active: cronMode === 'custom' }]" @click="cronMode = 'custom'">自定义</div>
+            </div>
+            <div class="cron-value-panel">
+              <div v-if="cronMode === 'minute'" class="cron-desc">每分钟执行一次</div>
+              <div v-if="cronMode === 'nminute'" class="cron-input-row">
+                每
+                <ElInputNumber v-model="cronNMinute" :min="1" :max="59" size="small" style="width: 80px" />
+                分钟执行一次
+              </div>
+              <div v-if="cronMode === 'hour'" class="cron-input-row">
+                每小时第
+                <ElInputNumber v-model="cronMinute" :min="0" :max="59" size="small" style="width: 80px" />
+                分执行
+              </div>
+              <div v-if="cronMode === 'nhour'" class="cron-input-row">
+                每
+                <ElInputNumber v-model="cronNHour" :min="1" :max="23" size="small" style="width: 80px" />
+                小时执行一次
+              </div>
+              <div v-if="cronMode === 'day'" class="cron-input-row">
+                每天
+                <ElInputNumber v-model="cronHour" :min="0" :max="23" size="small" style="width: 80px" />
+                时
+                <ElInputNumber v-model="cronMinute" :min="0" :max="59" size="small" style="width: 80px" />
+                分执行
+              </div>
+              <div v-if="cronMode === 'week'" class="cron-input-row">
+                每周
+                <ElSelect v-model="cronWeek" size="small" style="width: 120px">
+                  <ElOption label="周日" :value="0" />
+                  <ElOption label="周一" :value="1" />
+                  <ElOption label="周二" :value="2" />
+                  <ElOption label="周三" :value="3" />
+                  <ElOption label="周四" :value="4" />
+                  <ElOption label="周五" :value="5" />
+                  <ElOption label="周六" :value="6" />
+                </ElSelect>
+                <ElInputNumber v-model="cronHour" :min="0" :max="23" size="small" style="width: 80px" />
+                时
+                <ElInputNumber v-model="cronMinute" :min="0" :max="59" size="small" style="width: 80px" />
+                分执行
+              </div>
+              <div v-if="cronMode === 'month'" class="cron-input-row">
+                每月第
+                <ElInputNumber v-model="cronDay" :min="1" :max="31" size="small" style="width: 80px" />
+                日
+                <ElInputNumber v-model="cronHour" :min="0" :max="23" size="small" style="width: 80px" />
+                时
+                <ElInputNumber v-model="cronMinute" :min="0" :max="59" size="small" style="width: 80px" />
+                分执行
+              </div>
+              <div v-if="cronMode === 'custom'" class="cron-custom-row">
+                <ElInput v-model="form.cron_expression" placeholder="请输入Cron表达式" size="small" />
+                <div class="cron-hint">格式: 分 时 日 月 周</div>
+              </div>
+            </div>
+            <div class="cron-preview">
+              <span class="cron-preview-label">Cron表达式：</span>
+              <span class="cron-preview-value">{{ generateCron() }}</span>
+            </div>
+          </div>
         </ElFormItem>
         <ElFormItem :label="form.type === 'script' ? '脚本路径' : '执行命令'">
           <div v-if="form.type === 'script'" class="script-input-group">
@@ -660,6 +880,102 @@ th {
   text-align: center;
   padding: 30px;
   color: #999;
+}
+
+.cron-selector {
+  width: 100%;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.cron-mode-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  background: #f5f7fa;
+  border-bottom: 1px solid #e4e7ed;
+}
+
+.cron-mode-tab {
+  flex: 1;
+  min-width: 70px;
+  padding: 10px 0;
+  text-align: center;
+  font-size: 13px;
+  color: #606266;
+  cursor: pointer;
+  border-right: 1px solid #e4e7ed;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s ease;
+  background: #fff;
+}
+
+.cron-mode-tab:last-child {
+  border-right: none;
+}
+
+.cron-mode-tab:hover {
+  color: #409eff;
+  background: #ecf5ff;
+}
+
+.cron-mode-tab.active {
+  color: #409eff;
+  background: #ecf5ff;
+  border-bottom-color: #409eff;
+  font-weight: 500;
+}
+
+.cron-value-panel {
+  padding: 20px 16px;
+  min-height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cron-desc {
+  font-size: 14px;
+  color: #606266;
+}
+
+.cron-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #303133;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.cron-custom-row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cron-preview {
+  padding: 12px 16px;
+  background: #fafbfc;
+  border-top: 1px solid #e4e7ed;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.cron-preview-label {
+  color: #909399;
+}
+
+.cron-preview-value {
+  color: #409eff;
+  font-weight: 500;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
 }
 
 .script-input-group {

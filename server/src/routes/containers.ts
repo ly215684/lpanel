@@ -141,15 +141,32 @@ export async function containersRoutes(fastify: FastifyInstance) {
   })
 
   fastify.post('/compose/up', { preHandler: [authenticate, requirePermission({ action: 'manage', resource: 'containers' })] }, async (request, reply) => {
+    reply.type('text/event-stream')
+    reply.header('Cache-Control', 'no-cache')
+    reply.header('Connection', 'keep-alive')
+
+    const sendEvent = (data: string) => {
+      reply.raw.write(`data: ${JSON.stringify({ log: data })}\n\n`)
+    }
+
     try {
       const { path, content } = request.body as { path?: string; content?: string }
+      let composePath: string
+
       if (content) {
         await executeShellCommand(`echo "${content.replace(/"/g, '\\"')}" > /tmp/docker-compose-temp.yml`)
-        await composeUp('/tmp/docker-compose-temp.yml')
+        composePath = '/tmp/docker-compose-temp.yml'
       } else if (path) {
-        await composeUp(path)
+        composePath = path
+      } else {
+        reply.raw.write(`data: ${JSON.stringify({ done: true, success: false, message: '缺少 path 或 content 参数' })}\n\n`)
+        reply.raw.end()
+        return
       }
-      reply.send({ message: 'Compose services started successfully' })
+
+      await composeUp(composePath, sendEvent)
+      reply.raw.write(`data: ${JSON.stringify({ done: true, success: true, message: '部署成功' })}\n\n`)
+      reply.raw.end()
     } catch (error: any) {
       const message = extractErrorMessage(error, '启动失败')
       let errorType = 'unknown'
@@ -178,7 +195,8 @@ export async function containersRoutes(fastify: FastifyInstance) {
         userMessage = 'YAML 配置文件格式错误'
       }
 
-      reply.status(500).send({ error: errorType, message: userMessage, detail: message })
+      reply.raw.write(`data: ${JSON.stringify({ done: true, success: false, message: userMessage, error: errorType, detail: message })}\n\n`)
+      reply.raw.end()
     }
   })
 
