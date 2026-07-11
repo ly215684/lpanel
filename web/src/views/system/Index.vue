@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { ElButton, ElCard, ElBadge, ElMessage, ElSelect, ElOption, ElScrollbar } from 'element-plus'
-import { getServicesStatusApi, installDockerApi, installDockerComposeApi, installNginxApi, installApacheApi, installPHPApi, installMySQLApi, type SystemServices } from '@/api'
+import { ElButton, ElCard, ElBadge, ElMessage, ElSelect, ElOption, ElScrollbar, ElDialog, ElMessageBox } from 'element-plus'
+import ElTextarea from 'element-plus'
+import { getServicesStatusApi, installDockerApi, installDockerComposeApi, installNginxApi, installApacheApi, installPHPApi, installMySQLApi, startDockerApi, startNginxApi, startApacheApi, startPHPApi, startMySQLApi, stopDockerApi, stopNginxApi, stopApacheApi, stopPHPApi, stopMySQLApi, uninstallDockerApi, uninstallNginxApi, uninstallApacheApi, uninstallPHPApi, uninstallMySQLApi, getDockerConfigApi, saveDockerConfigApi, getNginxConfigApi, saveNginxConfigApi, getApacheConfigApi, saveApacheConfigApi, getPHPConfigApi, savePHPConfigApi, getMySQLConfigApi, saveMySQLConfigApi, type SystemServices } from '@/api'
 
 const services = ref<SystemServices | null>(null)
 const loading = ref(false)
@@ -9,6 +10,14 @@ const loading = ref(false)
 const installing = ref<Record<string, boolean>>({
   docker: false,
   compose: false,
+  nginx: false,
+  apache: false,
+  php: false,
+  mysql: false
+})
+
+const starting = ref<Record<string, boolean>>({
+  docker: false,
   nginx: false,
   apache: false,
   php: false,
@@ -31,6 +40,54 @@ const showLogs = ref<Record<string, boolean>>({
   apache: false,
   php: false,
   mysql: false
+})
+
+const stopping = ref<Record<string, boolean>>({
+  docker: false,
+  nginx: false,
+  apache: false,
+  php: false,
+  mysql: false
+})
+
+const uninstalling = ref<Record<string, boolean>>({
+  docker: false,
+  nginx: false,
+  apache: false,
+  php: false,
+  mysql: false
+})
+
+const uninstallLogs = ref<Record<string, string[]>>({
+  docker: [],
+  nginx: [],
+  apache: [],
+  php: [],
+  mysql: []
+})
+
+const showUninstallLogs = ref<Record<string, boolean>>({
+  docker: false,
+  nginx: false,
+  apache: false,
+  php: false,
+  mysql: false
+})
+
+const showConfigDialog = ref<Record<string, boolean>>({
+  docker: false,
+  nginx: false,
+  apache: false,
+  php: false,
+  mysql: false
+})
+
+const configContent = ref<Record<string, string>>({
+  docker: '',
+  nginx: '',
+  apache: '',
+  php: '',
+  mysql: ''
 })
 
 const phpVersion = ref('8.3')
@@ -115,6 +172,199 @@ function toggleLogs(service: string) {
   showLogs.value[service] = !showLogs.value[service]
 }
 
+async function handleStart(service: string) {
+  starting.value[service] = true
+  try {
+    switch (service) {
+      case 'docker':
+        installationLogs.value.docker = []
+        const dockerResult = await startDockerApi((log) => {
+          installationLogs.value.docker.push(log)
+        })
+        if (dockerResult.success) {
+          ElMessage.success('Docker 服务已启动')
+        } else {
+          ElMessage.error(dockerResult.message)
+        }
+        break
+      case 'nginx':
+        await startNginxApi()
+        ElMessage.success('Nginx 服务已启动')
+        break
+      case 'apache':
+        await startApacheApi()
+        ElMessage.success('Apache 服务已启动')
+        break
+      case 'php':
+        await startPHPApi()
+        ElMessage.success('PHP 服务已启动')
+        break
+      case 'mysql':
+        await startMySQLApi()
+        ElMessage.success('MySQL 服务已启动')
+        break
+    }
+    await loadServices()
+  } catch (error: any) {
+    ElMessage.error('启动失败: ' + error.message)
+  } finally {
+    starting.value[service] = false
+  }
+}
+
+async function handleStop(service: string) {
+  stopping.value[service] = true
+  try {
+    switch (service) {
+      case 'docker':
+        await stopDockerApi()
+        ElMessage.success('Docker 服务已停止')
+        break
+      case 'nginx':
+        await stopNginxApi()
+        ElMessage.success('Nginx 服务已停止')
+        break
+      case 'apache':
+        await stopApacheApi()
+        ElMessage.success('Apache 服务已停止')
+        break
+      case 'php':
+        await stopPHPApi()
+        ElMessage.success('PHP 服务已停止')
+        break
+      case 'mysql':
+        await stopMySQLApi()
+        ElMessage.success('MySQL 服务已停止')
+        break
+    }
+    await loadServices()
+  } catch (error: any) {
+    ElMessage.error('停止失败: ' + error.message)
+  } finally {
+    stopping.value[service] = false
+  }
+}
+
+async function handleUninstall(service: string) {
+  const serviceNames: Record<string, string> = {
+    docker: 'Docker',
+    nginx: 'Nginx',
+    apache: 'Apache',
+    php: 'PHP',
+    mysql: 'MySQL'
+  }
+  
+  try {
+    await ElMessageBox.confirm(`确定要卸载 ${serviceNames[service]} 吗？这将删除所有相关配置和数据，此操作不可恢复。`, '确认卸载', {
+      confirmButtonText: '确定卸载',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+    
+    uninstalling.value[service] = true
+    showUninstallLogs.value[service] = true
+    uninstallLogs.value[service] = []
+    
+    const onLog = (log: string) => {
+      uninstallLogs.value[service].push(log)
+    }
+    
+    let result: { success: boolean; message: string }
+    
+    switch (service) {
+      case 'docker':
+        result = await uninstallDockerApi(onLog)
+        break
+      case 'nginx':
+        result = await uninstallNginxApi(onLog)
+        break
+      case 'apache':
+        result = await uninstallApacheApi(onLog)
+        break
+      case 'php':
+        result = await uninstallPHPApi(onLog)
+        break
+      case 'mysql':
+        result = await uninstallMySQLApi(onLog)
+        break
+      default:
+        throw new Error('未知服务')
+    }
+    
+    if (result.success) {
+      ElMessage.success(result.message)
+      await loadServices()
+    } else {
+      ElMessage.error(result.message)
+    }
+  } catch (error: any) {
+    if (error !== 'cancel') {
+      uninstallLogs.value[service].push(`[ERROR] ${error.message}`)
+      ElMessage.error('卸载失败: ' + error.message)
+    }
+  } finally {
+    uninstalling.value[service] = false
+  }
+}
+
+async function openConfigDialog(service: string) {
+  try {
+    let config: { content: string }
+    switch (service) {
+      case 'docker':
+        config = await getDockerConfigApi()
+        break
+      case 'nginx':
+        config = await getNginxConfigApi()
+        break
+      case 'apache':
+        config = await getApacheConfigApi()
+        break
+      case 'php':
+        config = await getPHPConfigApi()
+        break
+      case 'mysql':
+        config = await getMySQLConfigApi()
+        break
+      default:
+        return
+    }
+    configContent.value[service] = config.content
+    showConfigDialog.value[service] = true
+  } catch (error: any) {
+    ElMessage.error('获取配置失败: ' + error.message)
+  }
+}
+
+async function saveConfig(service: string) {
+  try {
+    switch (service) {
+      case 'docker':
+        await saveDockerConfigApi(configContent.value[service])
+        break
+      case 'nginx':
+        await saveNginxConfigApi(configContent.value[service])
+        break
+      case 'apache':
+        await saveApacheConfigApi(configContent.value[service])
+        break
+      case 'php':
+        await savePHPConfigApi(configContent.value[service])
+        break
+      case 'mysql':
+        await saveMySQLConfigApi(configContent.value[service])
+        break
+      default:
+        return
+    }
+    ElMessage.success('配置已保存')
+    showConfigDialog.value[service] = false
+    await loadServices()
+  } catch (error: any) {
+    ElMessage.error('保存配置失败: ' + error.message)
+  }
+}
+
 function getLogClass(log: string): string {
   if (log.includes('[ERROR]')) return 'log-error'
   if (log.includes('[SUCCESS]')) return 'log-success'
@@ -165,10 +415,18 @@ onMounted(() => {
             </ElSelect>
             <ElButton type="primary" :loading="installing.docker" @click="handleInstall('docker')">安装 Docker</ElButton>
           </div>
-          <ElButton v-if="services?.docker.installed && !services?.docker.composeInstalled" type="primary" :loading="installing.compose" @click="handleInstall('compose')">安装 Compose</ElButton>
-          <ElButton v-if="services?.docker.installed && services?.docker.composeInstalled" type="success" disabled>已安装</ElButton>
+          <template v-else>
+            <ElButton v-if="!services?.docker.running" type="warning" :loading="starting.docker" @click="handleStart('docker')">启动</ElButton>
+            <ElButton v-else type="danger" :loading="stopping.docker" @click="handleStop('docker')">停止</ElButton>
+            <ElButton v-if="!services?.docker.composeInstalled" type="primary" :loading="installing.compose" @click="handleInstall('compose')">安装 Compose</ElButton>
+            <ElButton type="info" @click="openConfigDialog('docker')">配置</ElButton>
+            <ElButton type="danger" plain :loading="uninstalling.docker" @click="handleUninstall('docker')">卸载</ElButton>
+          </template>
           <ElButton v-if="installationLogs.docker.length > 0" type="text" @click="toggleLogs('docker')">
             {{ showLogs.docker ? '隐藏日志' : '查看日志' }}
+          </ElButton>
+          <ElButton v-if="uninstallLogs.docker.length > 0" type="text" @click="showUninstallLogs.docker = !showUninstallLogs.docker">
+            {{ showUninstallLogs.docker ? '隐藏卸载日志' : '查看卸载日志' }}
           </ElButton>
         </div>
 
@@ -202,9 +460,17 @@ onMounted(() => {
 
         <div class="action-buttons">
           <ElButton v-if="!services?.nginx.installed" type="primary" :loading="installing.nginx" @click="handleInstall('nginx')">安装 Nginx</ElButton>
-          <ElButton v-else type="success" disabled>已安装</ElButton>
+          <template v-else>
+            <ElButton v-if="!services?.nginx.running" type="warning" :loading="starting.nginx" @click="handleStart('nginx')">启动</ElButton>
+            <ElButton v-else type="danger" :loading="stopping.nginx" @click="handleStop('nginx')">停止</ElButton>
+            <ElButton type="info" @click="openConfigDialog('nginx')">配置</ElButton>
+            <ElButton type="danger" plain :loading="uninstalling.nginx" @click="handleUninstall('nginx')">卸载</ElButton>
+          </template>
           <ElButton v-if="installationLogs.nginx.length > 0" type="text" @click="toggleLogs('nginx')">
             {{ showLogs.nginx ? '隐藏日志' : '查看日志' }}
+          </ElButton>
+          <ElButton v-if="uninstallLogs.nginx.length > 0" type="text" @click="showUninstallLogs.nginx = !showUninstallLogs.nginx">
+            {{ showUninstallLogs.nginx ? '隐藏卸载日志' : '查看卸载日志' }}
           </ElButton>
         </div>
 
@@ -238,9 +504,17 @@ onMounted(() => {
 
         <div class="action-buttons">
           <ElButton v-if="!services?.apache.installed" type="primary" :loading="installing.apache" @click="handleInstall('apache')">安装 Apache</ElButton>
-          <ElButton v-else type="success" disabled>已安装</ElButton>
+          <template v-else>
+            <ElButton v-if="!services?.apache.running" type="warning" :loading="starting.apache" @click="handleStart('apache')">启动</ElButton>
+            <ElButton v-else type="danger" :loading="stopping.apache" @click="handleStop('apache')">停止</ElButton>
+            <ElButton type="info" @click="openConfigDialog('apache')">配置</ElButton>
+            <ElButton type="danger" plain :loading="uninstalling.apache" @click="handleUninstall('apache')">卸载</ElButton>
+          </template>
           <ElButton v-if="installationLogs.apache.length > 0" type="text" @click="toggleLogs('apache')">
             {{ showLogs.apache ? '隐藏日志' : '查看日志' }}
+          </ElButton>
+          <ElButton v-if="uninstallLogs.apache.length > 0" type="text" @click="showUninstallLogs.apache = !showUninstallLogs.apache">
+            {{ showUninstallLogs.apache ? '隐藏卸载日志' : '查看卸载日志' }}
           </ElButton>
         </div>
 
@@ -279,9 +553,17 @@ onMounted(() => {
             </ElSelect>
             <ElButton type="primary" :loading="installing.php" @click="handleInstall('php')">安装 PHP</ElButton>
           </div>
-          <ElButton v-else type="success" disabled>已安装</ElButton>
+          <template v-else>
+            <ElButton v-if="!services?.php.running" type="warning" :loading="starting.php" @click="handleStart('php')">启动</ElButton>
+            <ElButton v-else type="danger" :loading="stopping.php" @click="handleStop('php')">停止</ElButton>
+            <ElButton type="info" @click="openConfigDialog('php')">配置</ElButton>
+            <ElButton type="danger" plain :loading="uninstalling.php" @click="handleUninstall('php')">卸载</ElButton>
+          </template>
           <ElButton v-if="installationLogs.php.length > 0" type="text" @click="toggleLogs('php')">
             {{ showLogs.php ? '隐藏日志' : '查看日志' }}
+          </ElButton>
+          <ElButton v-if="uninstallLogs.php.length > 0" type="text" @click="showUninstallLogs.php = !showUninstallLogs.php">
+            {{ showUninstallLogs.php ? '隐藏卸载日志' : '查看卸载日志' }}
           </ElButton>
         </div>
 
@@ -315,9 +597,17 @@ onMounted(() => {
 
         <div class="action-buttons">
           <ElButton v-if="!services?.mysql.installed" type="primary" :loading="installing.mysql" @click="handleInstall('mysql')">安装 MySQL</ElButton>
-          <ElButton v-else type="success" disabled>已安装</ElButton>
+          <template v-else>
+            <ElButton v-if="!services?.mysql.running" type="warning" :loading="starting.mysql" @click="handleStart('mysql')">启动</ElButton>
+            <ElButton v-else type="danger" :loading="stopping.mysql" @click="handleStop('mysql')">停止</ElButton>
+            <ElButton type="info" @click="openConfigDialog('mysql')">配置</ElButton>
+            <ElButton type="danger" plain :loading="uninstalling.mysql" @click="handleUninstall('mysql')">卸载</ElButton>
+          </template>
           <ElButton v-if="installationLogs.mysql.length > 0" type="text" @click="toggleLogs('mysql')">
             {{ showLogs.mysql ? '隐藏日志' : '查看日志' }}
+          </ElButton>
+          <ElButton v-if="uninstallLogs.mysql.length > 0" type="text" @click="showUninstallLogs.mysql = !showUninstallLogs.mysql">
+            {{ showUninstallLogs.mysql ? '隐藏卸载日志' : '查看卸载日志' }}
           </ElButton>
         </div>
 
@@ -372,6 +662,46 @@ onMounted(() => {
 
     <ElButton type="default" @click="loadServices" style="margin-top: 20px;">刷新状态</ElButton>
   </div>
+
+  <ElDialog v-model="showConfigDialog.docker" title="Docker 配置" width="800px">
+    <ElTextarea v-model="configContent.docker" :rows="20" class="config-textarea" />
+    <template #footer>
+      <ElButton @click="showConfigDialog.docker = false">取消</ElButton>
+      <ElButton type="primary" @click="saveConfig('docker')">保存配置</ElButton>
+    </template>
+  </ElDialog>
+
+  <ElDialog v-model="showConfigDialog.nginx" title="Nginx 配置" width="800px">
+    <ElTextarea v-model="configContent.nginx" :rows="20" class="config-textarea" />
+    <template #footer>
+      <ElButton @click="showConfigDialog.nginx = false">取消</ElButton>
+      <ElButton type="primary" @click="saveConfig('nginx')">保存配置</ElButton>
+    </template>
+  </ElDialog>
+
+  <ElDialog v-model="showConfigDialog.apache" title="Apache 配置" width="800px">
+    <ElTextarea v-model="configContent.apache" :rows="20" class="config-textarea" />
+    <template #footer>
+      <ElButton @click="showConfigDialog.apache = false">取消</ElButton>
+      <ElButton type="primary" @click="saveConfig('apache')">保存配置</ElButton>
+    </template>
+  </ElDialog>
+
+  <ElDialog v-model="showConfigDialog.php" title="PHP 配置" width="800px">
+    <ElTextarea v-model="configContent.php" :rows="20" class="config-textarea" />
+    <template #footer>
+      <ElButton @click="showConfigDialog.php = false">取消</ElButton>
+      <ElButton type="primary" @click="saveConfig('php')">保存配置</ElButton>
+    </template>
+  </ElDialog>
+
+  <ElDialog v-model="showConfigDialog.mysql" title="MySQL 配置" width="800px">
+    <ElTextarea v-model="configContent.mysql" :rows="20" class="config-textarea" />
+    <template #footer>
+      <ElButton @click="showConfigDialog.mysql = false">取消</ElButton>
+      <ElButton type="primary" @click="saveConfig('mysql')">保存配置</ElButton>
+    </template>
+  </ElDialog>
 </template>
 
 <style scoped>
@@ -518,5 +848,11 @@ onMounted(() => {
 
 .log-default {
   color: #333;
+}
+
+.config-textarea {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
 }
 </style>

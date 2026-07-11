@@ -443,6 +443,106 @@ export async function getDockerStatusApi(): Promise<DockerStatus> {
   return request.get('/system/docker/status')
 }
 
+export async function startDockerApi(onLog?: (log: string) => void): Promise<{ success: boolean; message: string }> {
+  return makeSseRequest('/system/docker/start', {}, onLog)
+}
+
+export async function startNginxApi() {
+  return request.post('/system/nginx/start')
+}
+
+export async function startApacheApi() {
+  return request.post('/system/apache/start')
+}
+
+export async function startPHPApi() {
+  return request.post('/system/php/start')
+}
+
+export async function startMySQLApi() {
+  return request.post('/system/mysql/start')
+}
+
+export async function stopDockerApi() {
+  return request.post('/system/docker/stop')
+}
+
+export async function stopNginxApi() {
+  return request.post('/system/nginx/stop')
+}
+
+export async function stopApacheApi() {
+  return request.post('/system/apache/stop')
+}
+
+export async function stopPHPApi() {
+  return request.post('/system/php/stop')
+}
+
+export async function stopMySQLApi() {
+  return request.post('/system/mysql/stop')
+}
+
+export async function uninstallDockerApi(onLog?: (log: string) => void): Promise<{ success: boolean; message: string }> {
+  return makeSseRequest('/system/docker/uninstall', {}, onLog)
+}
+
+export async function uninstallNginxApi(onLog?: (log: string) => void): Promise<{ success: boolean; message: string }> {
+  return makeSseRequest('/system/nginx/uninstall', {}, onLog)
+}
+
+export async function uninstallApacheApi(onLog?: (log: string) => void): Promise<{ success: boolean; message: string }> {
+  return makeSseRequest('/system/apache/uninstall', {}, onLog)
+}
+
+export async function uninstallPHPApi(onLog?: (log: string) => void): Promise<{ success: boolean; message: string }> {
+  return makeSseRequest('/system/php/uninstall', {}, onLog)
+}
+
+export async function uninstallMySQLApi(onLog?: (log: string) => void): Promise<{ success: boolean; message: string }> {
+  return makeSseRequest('/system/mysql/uninstall', {}, onLog)
+}
+
+export async function getDockerConfigApi(): Promise<{ content: string }> {
+  return request.get('/system/docker/config')
+}
+
+export async function saveDockerConfigApi(content: string) {
+  return request.post('/system/docker/config', { content })
+}
+
+export async function getNginxConfigApi(): Promise<{ content: string }> {
+  return request.get('/system/nginx/config')
+}
+
+export async function saveNginxConfigApi(content: string) {
+  return request.post('/system/nginx/config', { content })
+}
+
+export async function getApacheConfigApi(): Promise<{ content: string }> {
+  return request.get('/system/apache/config')
+}
+
+export async function saveApacheConfigApi(content: string) {
+  return request.post('/system/apache/config', { content })
+}
+
+export async function getPHPConfigApi(): Promise<{ content: string }> {
+  return request.get('/system/php/config')
+}
+
+export async function savePHPConfigApi(content: string) {
+  return request.post('/system/php/config', { content })
+}
+
+export async function getMySQLConfigApi(): Promise<{ content: string }> {
+  return request.get('/system/mysql/config')
+}
+
+export async function saveMySQLConfigApi(content: string) {
+  return request.post('/system/mysql/config', { content })
+}
+
 export async function getServicesStatusApi(): Promise<SystemServices> {
   return request.get('/system/services')
 }

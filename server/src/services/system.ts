@@ -106,6 +106,382 @@ export async function checkDockerStatus(): Promise<DockerStatus> {
   return result
 }
 
+export async function startDocker(pushLog?: (log: string) => void): Promise<void> {
+  pushLog?.('[STEP] 尝试启动 Docker 服务...')
+  
+  pushLog?.('[STEP] 检查 containerd 服务状态...')
+  try {
+    const containerdStatus = await executeShellCommand('systemctl status containerd 2>&1 || true')
+    if (containerdStatus.stdout.includes('active (running)')) {
+      pushLog?.('[DONE] containerd 服务正在运行')
+    } else {
+      pushLog?.('[WARN] containerd 服务未运行，尝试启动...')
+      await executeSudoCommand('systemctl', ['start', 'containerd'])
+      pushLog?.('[DONE] containerd 服务已启动')
+    }
+  } catch {
+    pushLog?.('[WARN] 无法检查或启动 containerd 服务')
+  }
+  
+  pushLog?.('[STEP] 检查 containerd socket...')
+  try {
+    const socketCheck = await executeShellCommand('ls -la /run/containerd/containerd.sock 2>&1 || true')
+    if (socketCheck.stdout.includes('containerd.sock')) {
+      pushLog?.('[DONE] containerd socket 存在')
+    } else {
+      pushLog?.('[WARN] containerd socket 不存在')
+      pushLog?.(socketCheck.stdout)
+    }
+  } catch {
+    pushLog?.('[WARN] 无法检查 containerd socket')
+  }
+  
+  pushLog?.('[STEP] 检查 docker.socket...')
+  try {
+    const socketStatus = await executeShellCommand('systemctl status docker.socket 2>&1 || true')
+    if (socketStatus.stdout.includes('active (running)')) {
+      pushLog?.('[DONE] docker.socket 正在运行')
+    } else {
+      pushLog?.('[WARN] docker.socket 未运行，尝试启动...')
+      await executeSudoCommand('systemctl', ['start', 'docker.socket'])
+      pushLog?.('[DONE] docker.socket 已启动')
+    }
+  } catch {
+    pushLog?.('[WARN] 无法检查或启动 docker.socket')
+  }
+  
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      pushLog?.(`[STEP] 第 ${attempt} 次尝试启动 Docker...`)
+      await executeSudoCommand('systemctl', ['start', 'docker'])
+      pushLog?.('[DONE] Docker 服务启动成功')
+      
+      pushLog?.('[STEP] 验证 Docker 是否正常运行...')
+      const verifyResult = await executeShellCommand('docker info 2>&1 | head -5 || true')
+      pushLog?.(verifyResult.stdout)
+      return
+    } catch (error: any) {
+      pushLog?.(`[WARN] 第 ${attempt} 次启动失败: ${error.message}`)
+      
+      pushLog?.('[STEP] 获取 Docker 服务日志以诊断问题...')
+      const journalResult = await executeShellCommand('journalctl -u docker --no-pager -n 30 2>&1 || true')
+      pushLog?.(`[INFO] Docker 日志:\n${journalResult.stdout}`)
+      
+      if (attempt < 3) {
+        pushLog?.('[STEP] 重置 systemd 失败状态...')
+        await executeSudoCommand('systemctl', ['reset-failed', 'docker'])
+        pushLog?.('[DONE] systemd 状态已重置')
+        
+        pushLog?.('[STEP] 重新加载 systemd 配置...')
+        await executeSudoCommand('systemctl', ['daemon-reload'])
+        pushLog?.('[DONE] systemd 配置已重新加载')
+        
+        pushLog?.('[STEP] 检查并修复 daemon.json 配置...')
+        await fixDockerConfig(pushLog, attempt)
+        pushLog?.('[DONE] 配置修复完成')
+        
+        pushLog?.('[STEP] 等待 3 秒后重试...')
+        await new Promise(resolve => setTimeout(resolve, 3000))
+      } else {
+        pushLog?.('[ERROR] Docker 服务启动失败')
+        const statusResult = await executeShellCommand('systemctl status docker 2>&1 || true')
+        pushLog?.(`[ERROR] 服务状态:\n${statusResult.stdout}`)
+        pushLog?.(`[ERROR] 日志信息:\n${journalResult.stdout}`)
+        
+        pushLog?.('[STEP] 尝试直接运行 dockerd 以获取详细错误...')
+        const dockerdLog = await executeShellCommand('timeout 10 dockerd 2>&1 || true')
+        pushLog?.(`[ERROR] dockerd 直接运行输出:\n${dockerdLog.stdout}`)
+        
+        throw new Error(`Docker 服务启动失败\n${statusResult.stdout}\n${journalResult.stdout}\n${dockerdLog.stdout}`)
+      }
+    }
+  }
+}
+
+async function fixDockerConfig(pushLog?: (log: string) => void, attempt: number = 1): Promise<void> {
+  try {
+    pushLog?.('[STEP] 验证 dockerd 配置...')
+    const validateResult = await executeShellCommand('timeout 5 dockerd --validate 2>&1 || true')
+    if (validateResult.stdout.includes('error') || validateResult.stdout.includes('Error')) {
+      pushLog?.('[WARN] dockerd 配置验证失败:')
+      pushLog?.(validateResult.stdout)
+    } else if (validateResult.stdout.trim()) {
+      pushLog?.('[DONE] dockerd 配置验证通过')
+      return
+    } else {
+      pushLog?.('[INFO] dockerd --validate 返回空，尝试检查配置文件...')
+    }
+  } catch {
+    pushLog?.('[WARN] 无法执行 dockerd --validate，尝试其他方式检查...')
+  }
+  
+  try {
+    const configResult = await executeShellCommand('cat /etc/docker/daemon.json 2>/dev/null || echo ""')
+    const configContent = configResult.stdout.trim()
+    
+    if (!configContent || configContent === '{}') {
+      pushLog?.('[INFO] daemon.json 为空或不存在，使用默认配置')
+      const defaultConfig = JSON.stringify({
+        'registry-mirrors': ['https://docker.1panel.live', 'https://mirror.baidubce.com'],
+        dns: ['8.8.8.8', '114.114.114.114']
+      })
+      await executeShellCommand(`mkdir -p /etc/docker && cat > /etc/docker/daemon.json << 'EOF'\n${defaultConfig}\nEOF`)
+      return
+    }
+    
+    try {
+      const config = JSON.parse(configContent)
+      let changed = false
+      
+      if (config.proxies && config.proxies.default) {
+        pushLog?.('[WARN] 发现不支持的 proxies.default 配置，正在移除...')
+        delete config.proxies.default
+        if (Object.keys(config.proxies).length === 0) {
+          delete config.proxies
+        }
+        changed = true
+      }
+      
+      const unsupportedKeys = ['default']
+      for (const key of unsupportedKeys) {
+        if (config[key] !== undefined) {
+          pushLog?.(`[WARN] 发现不支持的配置项: ${key}，正在移除...`)
+          delete config[key]
+          changed = true
+        }
+      }
+      
+      if (changed) {
+        const fixedConfig = JSON.stringify(config, null, 2)
+        await executeShellCommand(`cat > /etc/docker/daemon.json << 'EOF'\n${fixedConfig}\nEOF`)
+        pushLog?.('[DONE] 已移除不支持的配置项')
+        return
+      }
+      
+      if (attempt >= 2) {
+        pushLog?.('[WARN] 配置格式正确但服务仍启动失败，尝试使用最小配置...')
+        const minimalConfig = JSON.stringify({
+          'registry-mirrors': ['https://docker.1panel.live', 'https://mirror.baidubce.com']
+        })
+        await executeShellCommand(`cat > /etc/docker/daemon.json << 'EOF'\n${minimalConfig}\nEOF`)
+        pushLog?.('[DONE] 已切换为最小配置')
+        return
+      }
+      
+      pushLog?.('[INFO] daemon.json 配置文件格式正确')
+    } catch {
+      pushLog?.('[WARN] daemon.json JSON 格式错误，使用默认配置')
+      const defaultConfig = JSON.stringify({
+        'registry-mirrors': ['https://docker.1panel.live', 'https://mirror.baidubce.com'],
+        dns: ['8.8.8.8', '114.114.114.114']
+      })
+      await executeShellCommand(`mkdir -p /etc/docker && cat > /etc/docker/daemon.json << 'EOF'\n${defaultConfig}\nEOF`)
+    }
+  } catch {
+    pushLog?.('[WARN] 无法读取 daemon.json，使用默认配置')
+    const defaultConfig = JSON.stringify({
+      'registry-mirrors': ['https://docker.1panel.live', 'https://mirror.baidubce.com'],
+      dns: ['8.8.8.8', '114.114.114.114']
+    })
+    await executeShellCommand(`mkdir -p /etc/docker && cat > /etc/docker/daemon.json << 'EOF'\n${defaultConfig}\nEOF`)
+  }
+  
+  if (attempt >= 3) {
+    pushLog?.('[WARN] 多次尝试后仍失败，尝试完全移除 daemon.json（核选项）...')
+    await executeShellCommand('rm -f /etc/docker/daemon.json')
+    pushLog?.('[DONE] 已移除 daemon.json，将使用 Docker 默认配置')
+  }
+}
+
+export async function startNginx(): Promise<void> {
+  await executeSudoCommand('systemctl', ['start', 'nginx'])
+}
+
+export async function startApache(): Promise<void> {
+  await executeSudoCommand('systemctl', ['start', 'apache2'])
+}
+
+export async function startPHP(): Promise<void> {
+  await executeSudoCommand('systemctl', ['start', 'php8.3-fpm'])
+}
+
+export async function startMySQL(): Promise<void> {
+  await executeSudoCommand('systemctl', ['start', 'mysql'])
+}
+
+export async function stopService(service: string): Promise<void> {
+  await executeSudoCommand('systemctl', ['stop', service])
+}
+
+export async function uninstallDocker(pushLog?: (log: string) => void): Promise<void> {
+  pushLog?.('[STEP] 停止 Docker 服务...')
+  await executeSudoCommand('systemctl', ['stop', 'docker'])
+  pushLog?.('[DONE] Docker 服务已停止')
+
+  pushLog?.('[STEP] 移除 Docker 包...')
+  await executeShellCommand('apt-get remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-compose')
+  pushLog?.('[DONE] Docker 包已移除')
+
+  pushLog?.('[STEP] 清理配置文件...')
+  await executeShellCommand('rm -rf /etc/docker /var/lib/docker /var/lib/containerd')
+  pushLog?.('[DONE] 配置文件已清理')
+}
+
+export async function uninstallNginx(pushLog?: (log: string) => void): Promise<void> {
+  pushLog?.('[STEP] 停止 Nginx 服务...')
+  await executeSudoCommand('systemctl', ['stop', 'nginx'])
+  pushLog?.('[DONE] Nginx 服务已停止')
+
+  pushLog?.('[STEP] 移除 Nginx 包...')
+  await executeShellCommand('apt-get remove -y nginx nginx-full nginx-core')
+  pushLog?.('[DONE] Nginx 包已移除')
+
+  pushLog?.('[STEP] 清理配置文件...')
+  await executeShellCommand('rm -rf /etc/nginx /var/www/html')
+  pushLog?.('[DONE] 配置文件已清理')
+}
+
+export async function uninstallApache(pushLog?: (log: string) => void): Promise<void> {
+  pushLog?.('[STEP] 停止 Apache 服务...')
+  await executeSudoCommand('systemctl', ['stop', 'apache2'])
+  pushLog?.('[DONE] Apache 服务已停止')
+
+  pushLog?.('[STEP] 移除 Apache 包...')
+  await executeShellCommand('apt-get remove -y apache2 apache2-utils')
+  pushLog?.('[DONE] Apache 包已移除')
+
+  pushLog?.('[STEP] 清理配置文件...')
+  await executeShellCommand('rm -rf /etc/apache2 /var/www/html')
+  pushLog?.('[DONE] 配置文件已清理')
+}
+
+export async function uninstallPHP(pushLog?: (log: string) => void): Promise<void> {
+  pushLog?.('[STEP] 停止 PHP-FPM 服务...')
+  await executeSudoCommand('systemctl', ['stop', 'php8.3-fpm'])
+  pushLog?.('[DONE] PHP-FPM 服务已停止')
+
+  pushLog?.('[STEP] 移除 PHP 包...')
+  await executeShellCommand('apt-get remove -y php8.3 php8.3-fpm php8.3-mysql php8.3-curl php8.3-gd php8.3-mbstring php8.3-xml php8.3-zip')
+  pushLog?.('[DONE] PHP 包已移除')
+
+  pushLog?.('[STEP] 清理配置文件...')
+  await executeShellCommand('rm -rf /etc/php /var/lib/php')
+  pushLog?.('[DONE] 配置文件已清理')
+}
+
+export async function uninstallMySQL(pushLog?: (log: string) => void): Promise<void> {
+  pushLog?.('[STEP] 停止 MySQL 服务...')
+  await executeSudoCommand('systemctl', ['stop', 'mysql'])
+  pushLog?.('[DONE] MySQL 服务已停止')
+
+  pushLog?.('[STEP] 移除 MySQL 包...')
+  await executeShellCommand('apt-get remove -y mysql-server mysql-client mysql-common')
+  pushLog?.('[DONE] MySQL 包已移除')
+
+  pushLog?.('[STEP] 清理数据和配置...')
+  await executeShellCommand('rm -rf /etc/mysql /var/lib/mysql /var/log/mysql')
+  pushLog?.('[DONE] 数据和配置已清理')
+}
+
+export async function getDockerConfig(): Promise<{ content: string }> {
+  try {
+    const result = await executeShellCommand('cat /etc/docker/daemon.json 2>/dev/null || echo "{}"')
+    return { content: result.stdout }
+  } catch {
+    return { content: '{}' }
+  }
+}
+
+export async function saveDockerConfig(config: string): Promise<void> {
+  let parsedConfig: any
+  
+  try {
+    parsedConfig = JSON.parse(config)
+  } catch {
+    throw new Error('daemon.json 配置格式错误，不是有效的 JSON')
+  }
+  
+  if (parsedConfig.proxies && parsedConfig.proxies.default) {
+    throw new Error('daemon.json 不支持 proxies.default 配置，请移除该配置')
+  }
+  
+  const oldConfigResult = await executeShellCommand('cat /etc/docker/daemon.json 2>/dev/null || echo ""')
+  const oldConfig = oldConfigResult.stdout
+  
+  await executeShellCommand(`cat > /etc/docker/daemon.json << 'EOF'\n${config}\nEOF`)
+  
+  try {
+    await executeSudoCommand('systemctl', ['restart', 'docker'])
+  } catch (error: any) {
+    if (oldConfig) {
+      await executeShellCommand(`cat > /etc/docker/daemon.json << 'EOF'\n${oldConfig}\nEOF`)
+      try {
+        await executeSudoCommand('systemctl', ['restart', 'docker'])
+      } catch (rollbackError) {
+        logger.error('Docker 配置回滚失败', rollbackError)
+      }
+    }
+    throw new Error(`Docker 配置保存失败，服务重启失败: ${error.message}\n已尝试恢复原配置`)
+  }
+}
+
+export async function getNginxConfig(): Promise<{ content: string }> {
+  try {
+    const result = await executeShellCommand('cat /etc/nginx/nginx.conf 2>/dev/null || echo ""')
+    return { content: result.stdout }
+  } catch {
+    return { content: '' }
+  }
+}
+
+export async function saveNginxConfig(config: string): Promise<void> {
+  await executeShellCommand(`cat > /etc/nginx/nginx.conf << 'EOF'\n${config}\nEOF`)
+  await executeSudoCommand('systemctl', ['reload', 'nginx'])
+}
+
+export async function getApacheConfig(): Promise<{ content: string }> {
+  try {
+    const result = await executeShellCommand('cat /etc/apache2/apache2.conf 2>/dev/null || echo ""')
+    return { content: result.stdout }
+  } catch {
+    return { content: '' }
+  }
+}
+
+export async function saveApacheConfig(config: string): Promise<void> {
+  await executeShellCommand(`cat > /etc/apache2/apache2.conf << 'EOF'\n${config}\nEOF`)
+  await executeSudoCommand('systemctl', ['reload', 'apache2'])
+}
+
+export async function getPHPConfig(): Promise<{ content: string }> {
+  try {
+    const result = await executeShellCommand('cat /etc/php/8.3/fpm/php.ini 2>/dev/null || cat /etc/php/8.3/cli/php.ini 2>/dev/null || echo ""')
+    return { content: result.stdout }
+  } catch {
+    return { content: '' }
+  }
+}
+
+export async function savePHPConfig(config: string): Promise<void> {
+  await executeShellCommand(`cat > /etc/php/8.3/fpm/php.ini << 'EOF'\n${config}\nEOF`)
+  await executeShellCommand(`cat > /etc/php/8.3/cli/php.ini << 'EOF'\n${config}\nEOF`)
+  await executeSudoCommand('systemctl', ['reload', 'php8.3-fpm'])
+}
+
+export async function getMySQLConfig(): Promise<{ content: string }> {
+  try {
+    const result = await executeShellCommand('cat /etc/mysql/mysql.conf.d/mysqld.cnf 2>/dev/null || cat /etc/mysql/my.cnf 2>/dev/null || echo ""')
+    return { content: result.stdout }
+  } catch {
+    return { content: '' }
+  }
+}
+
+export async function saveMySQLConfig(config: string): Promise<void> {
+  await executeShellCommand(`cat > /etc/mysql/mysql.conf.d/mysqld.cnf << 'EOF'\n${config}\nEOF`)
+  await executeSudoCommand('systemctl', ['restart', 'mysql'])
+}
+
 export async function getAllServicesStatus(): Promise<SystemServices> {
   return {
     docker: await checkDockerStatus(),
@@ -307,7 +683,7 @@ export async function installDocker(mirror: 'official' | 'aliyun' | 'daocloud' =
     }
 
     pushLog('[STEP] 启动 Docker 服务...')
-    await executeSudoCommand('systemctl', ['start', 'docker'])
+    await startDocker(pushLog)
     pushLog('[DONE] Docker 服务已启动')
 
     pushLog('[STEP] 启用 Docker 服务自启...')
@@ -327,6 +703,41 @@ export async function installDocker(mirror: 'official' | 'aliyun' | 'daocloud' =
     await executeSudoCommand('usermod', ['-aG', 'docker', currentUserResult.stdout.trim()])
     pushLog(`[INFO] 用户 ${currentUserResult.stdout.trim()} 已添加到 docker 组`)
     pushLog('[DONE] 用户组配置完成')
+
+    pushLog('[STEP] 配置 Docker 镜像加速...')
+    const dockerRegistryMirrors: Record<string, string[]> = {
+      official: ['https://docker.1panel.live', 'https://mirror.baidubce.com'],
+      aliyun: ['https://docker.1panel.live', 'https://mirror.baidubce.com'],
+      daocloud: ['https://docker.m.daocloud.io']
+    }
+    const selectedRegistryMirrors = dockerRegistryMirrors[mirror] || dockerRegistryMirrors.official
+    const daemonConfig = {
+      'registry-mirrors': selectedRegistryMirrors,
+      dns: ['8.8.8.8', '114.114.114.114']
+    }
+    await executeShellCommand(`mkdir -p /etc/docker`)
+    const configJson = JSON.stringify(daemonConfig)
+    await executeShellCommand(`cat > /etc/docker/daemon.json << 'EOF'\n${configJson}\nEOF`)
+    pushLog(`[INFO] 配置镜像源: ${selectedRegistryMirrors.join(', ')}`)
+    pushLog('[DONE] Docker 镜像加速配置完成')
+
+    pushLog('[STEP] 重启 Docker 服务以应用配置...')
+    try {
+      await startDocker(pushLog)
+      pushLog('[DONE] Docker 服务已重启并应用配置')
+    } catch (restartError: any) {
+      pushLog(`[WARN] Docker 服务重启失败: ${restartError.message}`)
+      pushLog('[WARN] 尝试清理配置后重试...')
+      try {
+        await executeShellCommand('rm -f /etc/docker/daemon.json')
+        await startDocker(pushLog)
+        pushLog('[INFO] 已移除镜像加速配置，Docker 服务使用默认配置启动')
+      } catch (cleanError: any) {
+        const statusResult = await executeShellCommand('systemctl status docker 2>&1 || true')
+        pushLog(`[ERROR] Docker 服务启动失败: ${statusResult.stdout || statusResult.stderr || 'Unknown error'}`)
+        pushLog('[WARN] Docker 安装完成但服务未启动，请手动检查')
+      }
+    }
 
     logger.info('Docker installation completed')
     pushLog('[SUCCESS] Docker 安装完成！')

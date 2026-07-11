@@ -366,6 +366,14 @@ function getErrorDetail(error: any): string | undefined {
 }
 
 async function deployWithLogs(data: { path?: string; content?: string }): Promise<{ success: boolean; message: string }> {
+  showDeployDialog.value = false
+  showFileDeployDialog.value = false
+  showCreateProjectDialog.value = false
+  showServicesDialog.value = false
+  showLogsDialog.value = false
+  showCreateDialog.value = false
+  showPullDialog.value = false
+
   showDeployLogDialog.value = true
   deploying.value = true
   deploySuccess.value = false
